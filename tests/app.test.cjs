@@ -91,6 +91,100 @@ async function app(storage = new IDBFactory()) {
   };
 }
 
+test('duplicate character copies all data with independent identities and persists separately', async () => {
+  const a = await app();
+
+  try {
+    const original = a.api.blank('Elowen');
+    original.image = image;
+    original.level = 5;
+    original.abilities[1] = 18;
+    original.skills = ['Stealth'];
+    original.attacks = [
+      { name: 'Bow', bonus: '+7', damage: '1d8', type: 'Piercing', notes: '' },
+    ];
+    original.resources = [{ name: 'Charges', remaining: 2, max: 3 }];
+    original.spells = [
+      {
+        name: 'Light',
+        level: 0,
+        school: '',
+        time: '',
+        range: '',
+        components: '',
+        duration: '',
+        description: 'Glow',
+        prepared: true,
+      },
+    ];
+    original.equipment = [
+      { name: 'Rope', quantity: 1, weight: 5, notes: '', equipped: true },
+    ];
+    original.notes = [
+      {
+        id: randomUUID(),
+        title: 'Session',
+        body: 'A clue',
+        tag: 'Session',
+        updated: new Date().toISOString(),
+        images: [image],
+      },
+    ];
+    original.coins.gp = 20;
+    a.api.use(original);
+
+    a.click('.character-actions [data-action="duplicate"]');
+    const copy = a.api.current;
+    assert.notEqual(copy.id, original.id);
+    assert.equal(copy.name, 'Elowen (copy)');
+    assert.notEqual(copy.notes[0].id, original.notes[0].id);
+    const expected = JSON.parse(JSON.stringify(original));
+    expected.id = copy.id;
+    expected.name = copy.name;
+    expected.updated = copy.updated;
+    expected.notes[0].id = copy.notes[0].id;
+    assert.deepEqual(JSON.parse(JSON.stringify(copy)), expected);
+
+    copy.abilities[1] = 20;
+    copy.attacks[0].name = 'New bow';
+    copy.resources[0].remaining = 0;
+    copy.spells[0].description = 'Changed';
+    copy.equipment[0].quantity = 2;
+    copy.notes[0].body = 'Alternate story';
+    copy.notes[0].images.push(image);
+    copy.coins.gp = 0;
+    assert.equal(original.abilities[1], 18);
+    assert.equal(original.attacks[0].name, 'Bow');
+    assert.equal(original.resources[0].remaining, 2);
+    assert.equal(original.spells[0].description, 'Glow');
+    assert.equal(original.equipment[0].quantity, 1);
+    assert.equal(original.notes[0].body, 'A clue');
+    assert.equal(original.notes[0].images.length, 1);
+    assert.equal(original.coins.gp, 20);
+
+    await a.api.persist();
+    const b = await app(a.storage);
+    try {
+      assert.equal(b.api.state.characters.length, 2);
+      assert.equal(b.api.current.id, copy.id);
+      assert.equal(b.api.current.notes[0].body, 'Alternate story');
+      assert.equal(
+        b.api.state.characters.find((character) => character.id === original.id)
+          .notes[0].body,
+        'A clue',
+      );
+      b.click('[data-action="menu"]');
+      b.click('#modal [data-action="duplicate"]');
+      assert.equal(b.api.state.characters.length, 3);
+      assert.equal(b.$('#modal').open, false);
+    } finally {
+      b.close();
+    }
+  } finally {
+    a.close();
+  }
+});
+
 test('create through the UI, edit stats, save, and reopen from IndexedDB', async () => {
   const a = await app();
   try {

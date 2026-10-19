@@ -380,7 +380,7 @@ function renderCharacter() {
           >${esc([c.species, c.class, c.subclass].filter(Boolean).join(' · ') || 'An unwritten story. Make it yours.')}</p
         ></div
       ><div class="character-actions"
-        >${button('rename', 'Edit identity', 'secondary')}${button('menu', '•••', 'secondary', 'aria-label="Character options"')}</div
+        >${button('rename', 'Edit identity', 'secondary')}${button('duplicate', 'Duplicate', 'secondary', 'aria-label="Duplicate character"')}${button('menu', '•••', 'secondary', 'aria-label="Character options"')}</div
       ></section
     ><div class="section-tabs"
       >${pages.map(([id, label]) => /* HTML */ `<button data-page="${id}" class="${page === id ? 'selected' : ''}">${label}</button>`).join('')}</div
@@ -1765,7 +1765,7 @@ document.addEventListener('click', async (e) => {
       copy.notes.forEach((n) => (n.id = uid()));
       state.characters.push(copy);
       state.selected = copy.id;
-      $('#modal').close();
+      if ($('#modal').open) $('#modal').close();
       changed();
       shell();
       toast('Character duplicated.');
