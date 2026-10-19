@@ -2148,6 +2148,21 @@ h2,
   min-height: 32px;
 }
 
+#backup-status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  font-size: 12px;
+}
+
+.backup-reminder {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--accent);
+}
+
 @media (max-width: 700px) {
   main {
     padding: 24px 20px;

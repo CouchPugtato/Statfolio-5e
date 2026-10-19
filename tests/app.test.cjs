@@ -35,7 +35,7 @@ async function app(storage = new IDBFactory()) {
   w.eval(
     source.replace(/init\(\);\s*$/, '') +
       `
-    globalThis.api = { blank, prof, mod, views, validateBackup, persist, shell, changed, exportBackup,
+    globalThis.api = { blank, prof, mod, views, validateBackup, persist, shell, changed, exportBackup, backupRecommended, renderBackupStatus,
       get state(){return state;},get revision(){return revision;},get savedRevision(){return savedRevision;},
       get failed(){return saveFailed;},get db(){return db;},setPage(p){page=p;shell();},
       use(c){state.characters.push(c);state.selected=c.id;shell();},get current(){return current();} };
@@ -90,6 +90,108 @@ async function app(storage = new IDBFactory()) {
     close: () => dom.window.close(),
   };
 }
+
+test('backup reminders use age and completed edits while ignoring navigation and individual keystrokes', async () => {
+  const a = await app();
+
+  try {
+    const character = a.api.blank('Backup reminders');
+    a.api.use(character);
+    const history = a.api.state.backupHistory;
+    const now = Date.now();
+    const day = 86400000;
+    history.lastExportAt = new Date(now - 2 * day).toISOString();
+    history.changesSinceExport = 19;
+    assert.equal(a.api.backupRecommended(now), false);
+
+    a.input('[data-field="name"]', 'One', false);
+    a.input('[data-field="name"]', 'One edit', false);
+    assert.equal(history.changesSinceExport, 19);
+    a.$('[data-field="name"]').dispatchEvent(
+      new a.w.Event('change', { bubbles: true }),
+    );
+    assert.equal(history.changesSinceExport, 20);
+    assert.equal(a.api.backupRecommended(now), true);
+    assert.ok(a.$('.backup-reminder'));
+    a.click('[data-action="library"]');
+    a.click(`[data-action="open"][data-id="${character.id}"]`);
+    assert.equal(history.changesSinceExport, 20);
+
+    history.lastExportAt = new Date(now).toISOString();
+    assert.equal(a.api.backupRecommended(now), false);
+    history.changesSinceExport = 1;
+    history.lastExportAt = new Date(now - 7 * day).toISOString();
+    assert.equal(a.api.backupRecommended(now), true);
+    history.changesSinceExport = 0;
+    assert.equal(a.api.backupRecommended(now), false);
+
+    history.lastExportAt = null;
+    history.firstChangeAt = new Date(now - 7 * day).toISOString();
+    history.changesSinceExport = 1;
+    assert.equal(a.api.backupRecommended(now), true);
+  } finally {
+    a.close();
+  }
+});
+
+test('backup dismissal persists for one day and exports reset local history without changing the backup format', async () => {
+  const a = await app();
+
+  try {
+    a.api.use(a.api.blank('Backup date'));
+    a.api.state.backupHistory = {
+      lastExportAt: new Date(Date.now() - 8 * 86400000).toISOString(),
+      firstChangeAt: null,
+      changesSinceExport: 2,
+      dismissedUntil: 0,
+    };
+    a.api.shell();
+    a.click('[data-action="dismiss-backup-reminder"]');
+    assert.equal(a.$('.backup-reminder'), null);
+    await a.api.persist();
+
+    const b = await app(a.storage);
+    try {
+      assert.equal(b.$('.backup-reminder'), null);
+      const history = b.api.state.backupHistory;
+      assert.equal(b.api.backupRecommended(history.dismissedUntil + 1), true);
+      b.w.Date.now = () => history.dismissedUntil + 1;
+      b.api.renderBackupStatus();
+      assert.ok(b.$('.backup-reminder'));
+
+      await b.api.exportBackup();
+      assert.equal(b.$('.backup-reminder'), null);
+      assert.equal(b.api.state.backupHistory.changesSinceExport, 0);
+      assert.equal(b.api.state.backupHistory.dismissedUntil, 0);
+      assert.ok(b.$('#backup-status time').dateTime);
+      assert.match(b.$('#backup-status > span').title, /Download generated/);
+      const backup = JSON.parse(await b.download().text());
+      assert.deepEqual(Object.keys(backup).sort(), [
+        'characters',
+        'exportedAt',
+        'format',
+        'version',
+      ]);
+      assert.equal(backup.exportedAt, b.api.state.backupHistory.lastExportAt);
+      await b.api.persist();
+
+      const reopened = await app(b.storage);
+      try {
+        assert.equal(
+          reopened.api.state.backupHistory.lastExportAt,
+          backup.exportedAt,
+        );
+        assert.equal(reopened.api.state.backupHistory.changesSinceExport, 0);
+      } finally {
+        reopened.close();
+      }
+    } finally {
+      b.close();
+    }
+  } finally {
+    a.close();
+  }
+});
 
 test('duplicate character copies all data with independent identities and persists separately', async () => {
   const a = await app();

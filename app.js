@@ -97,6 +97,79 @@ let revision = 0;
 let savedRevision = 0;
 let saveFailed = false;
 
+const dayInMilliseconds = 24 * 60 * 60 * 1000;
+const pendingBackupEdits = new WeakSet();
+
+function backupHistory() {
+  state.backupHistory ||= {
+    lastExportAt: null,
+    firstChangeAt: null,
+    changesSinceExport: 0,
+    dismissedUntil: 0,
+  };
+
+  return state.backupHistory;
+}
+
+function backupRecommended(now = Date.now()) {
+  const history = backupHistory();
+  const baseline = history.lastExportAt || history.firstChangeAt;
+  if (
+    !state.characters.length ||
+    !history.changesSinceExport ||
+    !baseline ||
+    history.dismissedUntil > now
+  )
+    return false;
+
+  const age = now - Date.parse(baseline);
+  return (
+    age >= 7 * dayInMilliseconds ||
+    (age >= dayInMilliseconds && history.changesSinceExport >= 20)
+  );
+}
+
+function backupStatus() {
+  const history = backupHistory();
+  const date = history.lastExportAt ? new Date(history.lastExportAt) : null;
+  const lastExport = date
+    ? `<span title="Download generated ${esc(date.toLocaleString())}">Last backup: <time datetime="${esc(history.lastExportAt)}">${esc(date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }))}</time></span>`
+    : '<span>No backup exported</span>';
+
+  return `${lastExport}${backupRecommended() ? `<span class="backup-reminder" role="status">Backup recommended ${button('dismiss-backup-reminder', 'Dismiss', 'text-button', 'aria-label="Dismiss backup reminder for one day"')}</span>` : ''}`;
+}
+
+function renderBackupStatus() {
+  const target = $('#backup-status');
+  if (target) target.innerHTML = backupStatus();
+}
+
+function recordBackupChange() {
+  const history = backupHistory();
+  history.firstChangeAt ||= new Date().toISOString();
+  history.changesSinceExport++;
+  renderBackupStatus();
+}
+
+function loadBackupHistory(saved = {}) {
+  const validDate = (value) =>
+    typeof value === 'string' && Number.isFinite(Date.parse(value));
+
+  return {
+    lastExportAt: validDate(saved?.lastExportAt) ? saved.lastExportAt : null,
+    firstChangeAt: validDate(saved?.firstChangeAt) ? saved.firstChangeAt : null,
+    changesSinceExport:
+      Number.isSafeInteger(saved?.changesSinceExport) &&
+      saved.changesSinceExport >= 0
+        ? saved.changesSinceExport
+        : 0,
+    dismissedUntil:
+      Number.isFinite(saved?.dismissedUntil) && saved.dismissedUntil >= 0
+        ? saved.dismissedUntil
+        : 0,
+  };
+}
+
 // Character defaults and browser storage.
 function blank(name = 'New adventurer') {
   return {
@@ -227,8 +300,9 @@ function persist() {
   return saveQueue;
 }
 
-function changed() {
+function changed(trackBackup = true) {
   revision++;
+  if (trackBackup) recordBackupChange();
   const c = current();
   if (c) c.updated = new Date().toISOString();
   status('● Saving…');
@@ -283,6 +357,7 @@ function shell() {
           >${saveFailed ? 'Save failed · export a backup' : revision !== savedRevision ? '● Saving…' : '● All changes saved'}</span
         ></div
       ><div class="backup-actions"
+        ><span id="backup-status">${backupStatus()}</span
         >${button('backup', 'Export backup', 'text-button')}${button('restore', 'Restore backup', 'text-button')}</div
       ></footer
     ></div
@@ -1534,6 +1609,15 @@ async function exportBackup() {
   a.download = `statfolio-backup-${new Date().toISOString().slice(0, 10)}.json`;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+  state.backupHistory = {
+    lastExportAt: backup.exportedAt,
+    firstChangeAt: null,
+    changesSinceExport: 0,
+    dismissedUntil: 0,
+  };
+  revision++;
+  renderBackupStatus();
   persist().catch(() => {});
   toast(
     `Backup exported with ${state.characters.length} character${state.characters.length === 1 ? '' : 's'} and all images.`,
@@ -1767,6 +1851,7 @@ $('#restore-file').onchange = async (e) => {
           state.characters.push(...copies);
         } else state.characters = copies;
         state.selected = null;
+        recordBackupChange();
         revision++;
         try {
           await persist();
@@ -1806,7 +1891,7 @@ document.addEventListener('click', async (e) => {
     case 'library':
       state.selected = null;
       shell();
-      changed();
+      changed(false);
       break;
 
     case 'new':
@@ -1818,11 +1903,18 @@ document.addEventListener('click', async (e) => {
       page = 'overview';
       noteId = null;
       shell();
-      changed();
+      changed(false);
       break;
 
     case 'backup':
       await exportBackup();
+      break;
+
+    case 'dismiss-backup-reminder':
+      backupHistory().dismissedUntil = Date.now() + dayInMilliseconds;
+      revision++;
+      renderBackupStatus();
+      persist().catch(() => {});
       break;
 
     case 'restore':
@@ -2294,7 +2386,8 @@ document.addEventListener('input', (e) => {
       }
     }
     set(c, el.dataset.field, value);
-    changed();
+    pendingBackupEdits.add(el);
+    changed(false);
     if (refreshesValues(el.dataset.field)) scheduleRefresh();
   }
   if (el.dataset.note) {
@@ -2311,7 +2404,8 @@ document.addEventListener('input', (e) => {
           ]
         : el.value;
     n.updated = new Date().toISOString();
-    changed();
+    pendingBackupEdits.add(el);
+    changed(false);
   }
 });
 
@@ -2346,6 +2440,11 @@ document.addEventListener('change', (e) => {
   const el = e.target,
     c = current();
   if (!c) return;
+  if (pendingBackupEdits.has(el)) {
+    pendingBackupEdits.delete(el);
+    recordBackupChange();
+    changed(false);
+  }
   if (el.id === 'journal-filter') {
     noteFilter = el.value;
     renderJournalList(c);
@@ -2377,7 +2476,7 @@ document.addEventListener('change', (e) => {
     if (el.type === 'number') el.value = get(c, el.dataset.field);
     if (el.dataset.field === 'maxHp' && c.hp > c.maxHp) {
       c.hp = c.maxHp;
-      changed();
+      changed(false);
     }
     if (refreshesValues(el.dataset.field)) scheduleRefresh();
   } else if (el.dataset.note) scheduleRefresh();
@@ -2392,7 +2491,10 @@ window.addEventListener('beforeunload', (e) => {
 
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) persist().catch(() => {});
+  else renderBackupStatus();
 });
+
+window.addEventListener('focus', renderBackupStatus);
 
 async function init() {
   try {
@@ -2415,6 +2517,7 @@ async function init() {
           characters: saved.characters,
         }),
         selected: saved.selected,
+        backupHistory: loadBackupHistory(saved.backupHistory),
       };
       if (!current()) state.selected = null;
     }
