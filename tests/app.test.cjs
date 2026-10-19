@@ -85,6 +85,29 @@ test('currency accepts comma-separated denominations and Enter gains once',async
  }finally{a.close();}
 });
 
+test('journal bullets autoformat, continue, indent, outdent, and persist as plain text',async()=>{
+ const a=await app();try{const c=a.api.blank('Lists');a.api.use(c);a.api.setPage('notes');a.click('[data-action="new-note"]');
+ const body=a.$('[data-note="body"]');
+ const type=value=>{body.value=value;body.setSelectionRange(value.length,value.length);body.dispatchEvent(new a.w.Event('input',{bubbles:true}));};
+ const key=(value,options={})=>body.dispatchEvent(new a.w.KeyboardEvent('keydown',{key:value,bubbles:true,cancelable:true,...options}));
+ type('- ');assert.equal(body.value,'● ');assert.equal(c.notes[0].body,'● ');
+ type('● First');key('Enter');assert.equal(body.value,'● First\n● ');
+ key('Tab');assert.equal(body.value,'● First\n            ○ ');
+ type(body.value+'Child');key('Enter');assert.equal(body.value,'● First\n            ○ Child\n            ○ ');
+ key('Tab');assert.equal(body.value,'● First\n            ○ Child\n                        ■ ');
+ key('Tab',{shiftKey:true});assert.equal(body.value,'● First\n            ○ Child\n            ○ ');
+ key('Enter');assert.equal(body.value,'● First\n            ○ Child\n● ');
+ key('Enter');assert.equal(body.value,'● First\n            ○ Child\n');
+ type('            * ');assert.equal(body.value,'            ○ ');
+ type('Normal - ');assert.equal(body.value,'Normal - ');
+ type(' '.repeat(12)+'○ ');key('Backspace');assert.equal(body.value,'');assert.equal(c.notes[0].body,'');
+ type('● Parent\n'+' '.repeat(24)+'■ ');key('Backspace');assert.equal(body.value,'● Parent\n');
+ type(' '.repeat(12)+'○ Child');body.setSelectionRange(14,14);key('Backspace');assert.equal(body.value,'Child');assert.equal(c.notes[0].body,'Child');
+ type('● Saved\n            ○ Child');await a.api.persist();
+ const b=await app(a.storage);try{assert.equal(b.api.current.notes[0].body,'● Saved\n            ○ Child');}finally{b.close();}
+ }finally{a.close();}
+});
+
 test('currency rejects overspending and invalid amounts without changing balances',async()=>{
  const a=await app();try{const c=a.api.blank('Limited funds');c.coins.gp=1;a.api.use(c);a.api.setPage('equipment');
  const before=JSON.stringify(c.coins);

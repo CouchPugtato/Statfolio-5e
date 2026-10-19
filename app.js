@@ -351,6 +351,85 @@ function growTextArea(el) {
 function growTextAreas(root = document) {
   root.querySelectorAll('textarea').forEach(growTextArea);
 }
+const noteIndent = ' '.repeat(12);
+const noteBullet = (indent) =>
+  ['●', '○', '■'][Math.min(2, Math.ceil(indent.length / noteIndent.length))];
+
+function formatNoteBullet(el) {
+  if (el.selectionStart !== el.selectionEnd) return;
+  const end = el.selectionStart;
+  const start = el.value.lastIndexOf('\n', end - 1) + 1;
+  const match = el.value.slice(start, end).match(/^([ \t]*)[-*] $/);
+  if (!match) return;
+  const indent = match[1].replace(/\t/g, noteIndent);
+  el.setRangeText(`${indent}${noteBullet(indent)} `, start, end, 'end');
+}
+
+function handleNoteListKey(event) {
+  const el = event.target;
+  if (
+    el.dataset.note !== 'body' ||
+    event.isComposing ||
+    event.ctrlKey ||
+    event.metaKey ||
+    event.altKey
+  )
+    return;
+  const cursor = el.selectionStart;
+  const start = cursor === 0 ? 0 : el.value.lastIndexOf('\n', cursor - 1) + 1;
+  const next = el.value.indexOf('\n', cursor);
+  const end = next === -1 ? el.value.length : next;
+  const line = el.value.slice(start, end);
+  const match = line.match(/^( *)([●○■•◦▪]) (.*)$/);
+  if (
+    event.key === 'Backspace' &&
+    match &&
+    cursor === el.selectionEnd &&
+    cursor === start + match[1].length + 2
+  ) {
+    event.preventDefault();
+    el.setRangeText('', start, cursor, 'end');
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    return;
+  }
+  if (
+    event.key === 'Tab' &&
+    match &&
+    !el.value.slice(cursor, el.selectionEnd).includes('\n')
+  ) {
+    event.preventDefault();
+    const indent = event.shiftKey
+      ? match[1].slice(noteIndent.length)
+      : match[1] + noteIndent;
+    const prefix = `${indent}${noteBullet(indent)} `;
+    const oldLength = match[1].length + 2;
+    const selectionEnd = el.selectionEnd;
+    el.setRangeText(prefix, start, start + oldLength, 'preserve');
+    el.setSelectionRange(
+      Math.max(start + prefix.length, cursor + prefix.length - oldLength),
+      Math.max(start + prefix.length, selectionEnd + prefix.length - oldLength),
+    );
+  } else if (event.key === 'Enter' && !event.shiftKey && match) {
+    event.preventDefault();
+    if (!match[3].trim()) {
+      const indent = match[1].slice(noteIndent.length);
+      el.setRangeText(
+        match[1] ? `${indent}${noteBullet(indent)} ` : '',
+        start,
+        end,
+        'end',
+      );
+    } else {
+      el.setRangeText(
+        `\n${match[1]}${noteBullet(match[1])} `,
+        cursor,
+        el.selectionEnd,
+        'end',
+      );
+    }
+  } else return;
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+}
 let textAreaFrame;
 window.addEventListener('resize', () => {
   cancelAnimationFrame(textAreaFrame);
@@ -690,6 +769,7 @@ document.addEventListener('focusout', (event) => {
   hideSpellPopup();
 });
 document.addEventListener('keydown', (event) => {
+  handleNoteListKey(event);
   if (event.key === 'Escape') hideSpellPopup();
   if (
     event.key === 'Enter' &&
@@ -1749,6 +1829,7 @@ function refreshesValues(path) {
 document.addEventListener('input', (e) => {
   const el = e.target,
     c = current();
+  if (el.dataset.note === 'body' && !e.isComposing) formatNoteBullet(el);
   if (el.tagName === 'TEXTAREA') growTextArea(el);
   if (el.id === 'library-search') {
     const pos = el.selectionStart;
