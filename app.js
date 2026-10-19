@@ -1022,7 +1022,7 @@ function journalView(c) {
       >${
         n
           ? /* HTML */ `<div class="panel-heading"
-                ><span class="eyebrow">A PAGE IN YOUR ADVENTURE</span
+                ><span class="eyebrow">Note details</span
                 >${button('delete-note', 'Delete note', 'text-button danger')}</div
               ><label class="field"
                 ><span>Title</span
@@ -1041,7 +1041,7 @@ function journalView(c) {
                 ><textarea
                   class="note-body"
                   data-note="body"
-                  placeholder="What will you remember from this adventure?"
+                  placeholder="Write your notes here…"
                 >
 ${esc(n.body)}</textarea></label
               ><div class="note-attachments"

@@ -1029,7 +1029,12 @@ input[type='number'],
 .note-list {
   padding: 20px 0;
   height: fit-content;
-  overflow: visible;
+  max-height: clamp(280px, calc(100dvh - 220px), 680px);
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.note-list::-webkit-scrollbar {
+  display: none;
 }
 .note-list > .panel-heading,
 .note-list > .help {
@@ -1979,6 +1984,17 @@ dialog .form-grid {
 }
 .journal > .panel {
   margin-bottom: 0;
+}
+@media (min-width: 951px) {
+  .journal {
+    align-items: stretch;
+  }
+  .journal > .note-list {
+    contain: size;
+    height: auto;
+    min-height: 0;
+    max-height: none;
+  }
 }
 .inventory-row {
   row-gap: var(--field-gap);
