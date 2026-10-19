@@ -1,13 +1,18 @@
-const $ = (s, root = document) => root.querySelector(s);
-const esc = (v) =>
-  String(v ?? '').replace(
+// Shared DOM helpers and fifth-edition rules.
+
+const $ = (selector, root = document) => root.querySelector(selector);
+
+const esc = (value) =>
+  String(value ?? '').replace(
     /[&<>"']/g,
     (c) =>
       ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[
         c
       ],
   );
+
 const uid = () => crypto.randomUUID();
+
 const abilities = [
   'Strength',
   'Dexterity',
@@ -16,6 +21,7 @@ const abilities = [
   'Wisdom',
   'Charisma',
 ];
+
 const skills = {
   Acrobatics: 1,
   'Animal Handling': 4,
@@ -36,6 +42,7 @@ const skills = {
   Stealth: 1,
   Survival: 4,
 };
+
 const pages = [
   ['overview', 'Character', '◈'],
   ['abilities', 'Skills', '◇'],
@@ -45,6 +52,7 @@ const pages = [
   ['background', 'Background', '☷'],
   ['notes', 'Journal', '✎'],
 ];
+
 const noteCategories = [
   'General',
   'Session',
@@ -53,31 +61,43 @@ const noteCategories = [
   'Location',
   'Lore',
 ];
-let noteSearch = '',
-  noteFilter = 'all',
-  journalCharacterId = null;
+
+// View state stays in memory; character data is saved to IndexedDB.
+
+let noteSearch = '';
+let noteFilter = 'all';
+let journalCharacterId = null;
 let editingAttack = null;
 let editingSpell = null;
+
+const deletedEntries = [];
+
 let spellPopup = null;
 let spellPopupCard = null;
 let skillSearch = '';
 let skillCharacterId = null;
+
 const filteredSkills = () =>
   Object.entries(skills).filter(([name]) =>
     name.toLocaleLowerCase().includes(skillSearch.trim().toLocaleLowerCase()),
   );
+
 const mod = (n) => Math.floor((Number(n) - 10) / 2);
+
 const sign = (n) => (n >= 0 ? `+${n}` : String(n));
-let state = { characters: [], selected: null },
-  page = 'overview',
-  librarySearch = '',
-  noteId = null,
-  db,
-  saveTimer,
-  saveQueue = Promise.resolve(),
-  revision = 0,
-  savedRevision = 0,
-  saveFailed = false;
+
+let state = { characters: [], selected: null };
+let page = 'overview';
+let librarySearch = '';
+let noteId = null;
+let db;
+let saveTimer;
+let saveQueue = Promise.resolve();
+let revision = 0;
+let savedRevision = 0;
+let saveFailed = false;
+
+// Character defaults and browser storage.
 function blank(name = 'New adventurer') {
   return {
     id: uid(),
@@ -91,10 +111,12 @@ function blank(name = 'New adventurer') {
     player: '',
     xp: 0,
     image: '',
+
     abilities: [10, 10, 10, 10, 10, 10],
     saves: [],
     skills: [],
     expertise: [],
+
     hp: 10,
     maxHp: 10,
     tempHp: 0,
@@ -107,17 +129,21 @@ function blank(name = 'New adventurer') {
     deathSuccess: 0,
     deathFailure: 0,
     conditions: '',
+
     attacks: [],
     resources: [],
     features: '',
+
     spells: [],
     spellAbility: 3,
     slots: Array(9).fill(0),
     usedSlots: Array(9).fill(0),
     spellNotes: '',
+
     equipment: [],
     coins: { cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
     proficiencies: '',
+
     appearance: '',
     personality: '',
     ideals: '',
@@ -125,29 +151,41 @@ function blank(name = 'New adventurer') {
     flaws: '',
     story: '',
     allies: '',
+
     notes: [],
     updated: new Date().toISOString(),
   };
 }
+
 const current = () => state.characters.find((c) => c.id === state.selected);
+
 const prof = (c) => 2 + Math.floor((c.level - 1) / 4);
+
 const healthTotal = (c) => c.hp + c.tempHp;
+
 const healthReadout = (c) =>
   /* HTML */ `<strong title="${c.hp} current HP + ${c.tempHp} temporary HP"
     >${healthTotal(c)}/${c.maxHp}</strong
   >`;
-const get = (o, p) => p.split('.').reduce((a, k) => a?.[k], o);
-function set(o, p, v) {
-  const parts = p.split('.');
-  const last = parts.pop();
-  parts.reduce((a, k) => a[k], o)[last] = v;
+
+const get = (object, path) =>
+  path.split('.').reduce((value, key) => value?.[key], object);
+
+function set(object, path, value) {
+  const parts = path.split('.');
+  const property = parts.pop();
+  const parent = parts.reduce((value, key) => value[key], object);
+
+  parent[property] = value;
 }
+
 function toast(message) {
   $('#toast').textContent = message;
   $('#toast').classList.add('show');
   clearTimeout(toast.timer);
   toast.timer = setTimeout(() => $('#toast').classList.remove('show'), 4000);
 }
+
 function status(message, error = false) {
   const el = $('#save-status');
   if (el) {
@@ -155,6 +193,7 @@ function status(message, error = false) {
     el.classList.toggle('error', error);
   }
 }
+
 function persist() {
   clearTimeout(saveTimer);
   saveTimer = null;
@@ -187,6 +226,7 @@ function persist() {
   saveQueue.catch(() => {});
   return saveQueue;
 }
+
 function changed() {
   revision++;
   const c = current();
@@ -197,6 +237,7 @@ function changed() {
     persist().catch(() => {});
   }, 250);
 }
+
 const field = (label, path, type = 'text', opts = {}) =>
   /* HTML */ `<label class="field ${opts.wide ? 'wide' : ''}"
     ><span>${label}</span
@@ -208,20 +249,25 @@ const field = (label, path, type = 'text', opts = {}) =>
       value="${esc(get(current(), path))}"
       ${opts.placeholder ? `placeholder="${esc(opts.placeholder)}"` : ''}
   /></label>`;
+
 const area = (label, path, placeholder = '') =>
   /* HTML */ `<label class="field wide"
     ><span>${label}</span
     ><textarea rows="2" data-field="${path}" placeholder="${esc(placeholder)}">
 ${esc(get(current(), path))}</textarea>
   </label>`;
+
 const empty = (title, sub, action = '') =>
   /* HTML */ `<div class="empty"
     ><div class="empty-mark">✧</div><h3>${title}</h3><p>${sub}</p>${action}</div
   >`;
+
 const button = (action, label, cls = '', data = '') =>
   /* HTML */ `<button class="${cls}" data-action="${action}" ${data}
     >${label}</button
   >`;
+
+// Page rendering and form layout.
 function shell() {
   hideSpellPopup();
   const c = current();
@@ -244,6 +290,7 @@ function shell() {
   if (c) renderCharacter();
   else renderLibrary();
 }
+
 function renderLibrary() {
   const characters = state.characters.filter((c) =>
     `${c.name} ${c.class} ${c.species}`
@@ -304,6 +351,7 @@ function renderLibrary() {
         .join('')}</div
     >${!characters.length ? empty(state.characters.length ? 'No matching characters' : 'No characters yet', state.characters.length ? 'Try a different search.' : 'Create a character to start your sheet and journal.') : ''}`;
 }
+
 function renderCharacter() {
   hideSpellPopup();
   const c = current();
@@ -340,6 +388,7 @@ function renderCharacter() {
   patchContent($('#main'), html);
   growTextAreas($('#main'));
 }
+
 function growTextArea(el) {
   el.style.height = 'auto';
   const style = getComputedStyle(el);
@@ -348,13 +397,17 @@ function growTextArea(el) {
     (parseFloat(style.borderBottomWidth) || 0);
   el.style.height = `${Math.ceil(el.scrollHeight + borders)}px`;
 }
+
 function growTextAreas(root = document) {
   root.querySelectorAll('textarea').forEach(growTextArea);
 }
+
 const noteIndent = ' '.repeat(12);
+
 const noteBullet = (indent) =>
   ['●', '○', '■'][Math.min(2, Math.ceil(indent.length / noteIndent.length))];
 
+// Journal list editing uses plain text so bullets survive backups and exports.
 function formatNoteBullet(el) {
   if (el.selectionStart !== el.selectionEnd) return;
   const end = el.selectionStart;
@@ -430,12 +483,16 @@ function handleNoteListKey(event) {
   } else return;
   el.dispatchEvent(new Event('input', { bubbles: true }));
 }
+
 let textAreaFrame;
+
 window.addEventListener('resize', () => {
   cancelAnimationFrame(textAreaFrame);
   textAreaFrame = requestAnimationFrame(() => growTextAreas());
 });
+
 // Preserve existing controls during stat updates so blur events don't swallow a click
+
 // and editing one field doesn't discard focus or the user's selection in another.
 function patchContent(target, html) {
   const template = document.createElement('template');
@@ -486,16 +543,19 @@ function patchContent(target, html) {
   wrapper.append(template.content);
   sync(target, wrapper);
 }
+
 const panel = (title, body, extra = '') =>
   /* HTML */ `<section class="panel"
     ><div class="panel-heading"><h2>${title}</h2>${extra}</div
     ><div class="panel-body">${body}</div></section
   >`;
+
 function abilityTiles(c) {
   return /* HTML */ `<div class="ability-grid"
     >${abilities.map((a, i) => /* HTML */ `<div class="ability-tile"><span>${a}</span><strong>${sign(mod(c.abilities[i]))}</strong><input type="number" min="1" max="30" aria-label="${a} score" data-field="abilities.${i}" value="${c.abilities[i]}" /></div>`).join('')}</div
   >`;
 }
+
 function healthControls(c) {
   return /* HTML */ `<div class="hp-display">${healthReadout(c)}</div
     ><div class="hp-track"
@@ -518,24 +578,30 @@ function healthControls(c) {
       >${field('Temporary HP', 'tempHp', 'number')}${field('Maximum HP', 'maxHp', 'number')}</div
     >`;
 }
+
 const coinValues = { cp: 1, sp: 10, ep: 50, gp: 100, pp: 1000 };
 
 function parseCurrency(raw, defaultUnit) {
   const amounts = { cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 };
   const parts = raw.split(',');
+
   for (const part of parts) {
     const match = part.trim().match(/^(\d+)\s*(cp|sp|ep|gp|pp)?$/i);
     if (!match || (!match[2] && parts.length > 1)) return null;
+
     const amount = Number(match[1]);
     const unit = match[2]?.toLowerCase() || defaultUnit;
     if (!Number.isSafeInteger(amount) || amount <= 0) return null;
+
     amounts[unit] += amount;
     if (!Number.isSafeInteger(amounts[unit])) return null;
   }
+
   const cost = Object.entries(coinValues).reduce(
     (sum, [unit, value]) => sum + amounts[unit] * value,
     0,
   );
+
   return Number.isSafeInteger(cost) ? { amounts, cost } : null;
 }
 
@@ -543,6 +609,7 @@ function spendCoins(coins, cost) {
   const remainingCoins = { ...coins };
   const denominations = Object.keys(coinValues);
   let remaining = cost;
+
   // Use exact change first, then break the smallest larger coins available.
   for (const unit of [...denominations].reverse()) {
     const used = Math.min(
@@ -552,19 +619,24 @@ function spendCoins(coins, cost) {
     remainingCoins[unit] -= used;
     remaining -= used * coinValues[unit];
   }
+
   for (let i = 0; remaining > 0 && i < denominations.length; i++) {
     const unit = denominations[i];
     if (!remainingCoins[unit]) continue;
+
     const used = Math.min(
       remainingCoins[unit],
       Math.ceil(remaining / coinValues[unit]),
     );
+
     remainingCoins[unit] -= used;
     let change = used * coinValues[unit] - remaining;
+
     if (change < 0) {
       remaining = -change;
       continue;
     }
+
     remaining = 0;
     for (let j = i - 1; j >= 0; j--) {
       const smaller = denominations[j];
@@ -573,8 +645,10 @@ function spendCoins(coins, cost) {
       change -= count * coinValues[smaller];
     }
   }
+
   return remaining === 0 ? remainingCoins : null;
 }
+
 function spellcastingSummary(c) {
   return /* HTML */ `<section
     class="spell-summary panel"
@@ -599,6 +673,7 @@ function spellcastingSummary(c) {
     ></section
   >`;
 }
+
 function spellSlots(c) {
   const header = c.slots
     .map((_, i) => /* HTML */ `<th scope="col">${i + 1}</th>`)
@@ -626,6 +701,7 @@ function spellSlots(c) {
     '<span class="muted">Used slots reset on a long rest.</span>',
   );
 }
+
 function attackRecords(c) {
   if (!c.attacks.length)
     return '<p class="muted">Add your weapons, attacks, and special actions.</p>';
@@ -682,6 +758,7 @@ function attackRecords(c) {
       .join('')}</div
   >`;
 }
+
 function hideSpellPopup() {
   if (
     spellPopupCard?.getAttribute('aria-describedby') ===
@@ -692,6 +769,7 @@ function hideSpellPopup() {
   spellPopupCard = null;
   if (spellPopup) spellPopup.hidden = true;
 }
+
 function showSpellPopup(card) {
   const spell =
     page === 'spells' ? current()?.spells[Number(card.dataset.index)] : null;
@@ -739,11 +817,13 @@ function showSpellPopup(card) {
   spellPopup.style.left = `${clamp(left, width - popupRect.width - margin)}px`;
   spellPopup.style.top = `${clamp(top, height - popupRect.height - margin)}px`;
 }
+
 document.addEventListener('pointerover', (event) => {
   if (event.pointerType === 'touch') return;
   const card = event.target.closest('.spell-record-summary');
   if (card) showSpellPopup(card);
 });
+
 document.addEventListener('pointerout', (event) => {
   if (!spellPopupCard) return;
   const next = event.relatedTarget;
@@ -754,11 +834,13 @@ document.addEventListener('pointerout', (event) => {
   )
     hideSpellPopup();
 });
+
 document.addEventListener('focusin', (event) => {
   const card = event.target.closest('.spell-record-summary');
   if (card) showSpellPopup(card);
   else if (!spellPopup?.contains(event.target)) hideSpellPopup();
 });
+
 document.addEventListener('focusout', (event) => {
   const next = event.relatedTarget;
   if (
@@ -768,7 +850,41 @@ document.addEventListener('focusout', (event) => {
     return;
   hideSpellPopup();
 });
+
+function undoDeletedEntry(event) {
+  const isUndo =
+    (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z';
+  const isEditingText = event.target.closest(
+    'input, textarea, select, [contenteditable="true"]',
+  );
+  if (
+    !isUndo ||
+    event.shiftKey ||
+    event.altKey ||
+    event.isComposing ||
+    $('#modal').open ||
+    isEditingText
+  )
+    return false;
+
+  const character = current();
+  const historyIndex = deletedEntries.findLastIndex(
+    (entry) => entry.character === character,
+  );
+  if (historyIndex === -1) return false;
+
+  event.preventDefault();
+  const [entry] = deletedEntries.splice(historyIndex, 1);
+  const entries = character[entry.list];
+  entries.splice(Math.min(entry.index, entries.length), 0, entry.item);
+  changed();
+  renderCharacter();
+  toast('Deleted entry restored.');
+  return true;
+}
+
 document.addEventListener('keydown', (event) => {
+  if (undoDeletedEntry(event)) return;
   handleNoteListKey(event);
   if (event.key === 'Escape') hideSpellPopup();
   if (
@@ -780,7 +896,9 @@ document.addEventListener('keydown', (event) => {
     if (!event.repeat) $('.currency-actions [data-action="gain"]')?.click();
   }
 });
+
 window.addEventListener('resize', hideSpellPopup);
+
 document.addEventListener(
   'scroll',
   (event) => {
@@ -788,6 +906,7 @@ document.addEventListener(
   },
   true,
 );
+
 function spellRecords(c) {
   if (!c.spells.length)
     return empty(
@@ -867,11 +986,67 @@ function spellRecords(c) {
       .join('')}</div
   >`;
 }
+
+function savingThrows(character) {
+  return abilities
+    .map((ability, index) => {
+      const proficient = character.saves.includes(index);
+      const bonus =
+        mod(character.abilities[index]) + (proficient ? prof(character) : 0);
+      return /* HTML */ `<label class="save-row"
+        ><input
+          type="checkbox"
+          data-save="${index}"
+          ${proficient ? 'checked' : ''}
+        /><span>${ability}</span><strong>${sign(bonus)}</strong></label
+      >`;
+    })
+    .join('');
+}
+
+function resourceRecords(character) {
+  return character.resources
+    .map((resource, index) => {
+      const path = `resources.${index}`;
+      const removeButton = button(
+        'remove',
+        '×',
+        'icon-button',
+        `data-list="resources" data-index="${index}" aria-label="Remove resource"`,
+      );
+      return /* HTML */ `<div class="record"
+        ><div class="record-top"
+          >${field('Resource', `${path}.name`)}${removeButton}</div
+        ><div class="form-grid"
+          >${field('Remaining', `${path}.remaining`, 'number')}${field('Maximum', `${path}.max`, 'number')}</div
+        ></div
+      >`;
+    })
+    .join('');
+}
+
+function characterDetails() {
+  const fields = [
+    field('Character name', 'name'),
+    field('Class', 'class'),
+    field('Subclass', 'subclass'),
+    field('Level', 'level', 'number', { max: 20 }),
+
+    field('Species / race', 'species'),
+    field('Background', 'background'),
+    field('Alignment', 'alignment'),
+    field('Player name', 'player'),
+    field('Experience points', 'xp', 'number'),
+  ];
+
+  return `<div class="form-grid">${fields.join('')}</div>`;
+}
+
 const views = {
   overview: (c) =>
     /* HTML */ `<div class="sheet-grid overview-grid"
       ><div
-        >${panel('Ability scores', abilityTiles(c), '<span class="muted">Modifiers calculated automatically</span>')}${panel('Character details', /* HTML */ `<div class="form-grid">${field('Character name', 'name')}${field('Class', 'class')}${field('Subclass', 'subclass')}${field('Level', 'level', 'number', { max: 20 })}${field('Species / race', 'species')}${field('Background', 'background')}${field('Alignment', 'alignment')}${field('Player name', 'player')}${field('Experience points', 'xp', 'number')}</div>`)}</div
+        >${panel('Ability scores', abilityTiles(c), '<span class="muted">Modifiers calculated automatically</span>')}${panel('Character details', characterDetails())}</div
       ><div
         >${panel(
           'Reference Stats',
@@ -937,13 +1112,13 @@ const views = {
           .join(
             '',
           )}${filteredSkills().length ? '' : '<p class="muted" role="status">No matching skills.</p>'}`,
-    )}<div>${panel('Saving throws', abilities.map((a, i) => /* HTML */ `<label class="save-row"><input type="checkbox" data-save="${i}" ${c.saves.includes(i) ? 'checked' : ''} /><span>${a}</span><strong>${sign(mod(c.abilities[i]) + (c.saves.includes(i) ? prof(c) : 0))}</strong></label>`).join(''))}${panel('Other proficiencies & languages', area('Languages, tools, armor & weapons', 'proficiencies', 'Common, Elvish, thieves’ tools…'))}</div></div>`,
+    )}<div>${panel('Saving throws', savingThrows(c))}${panel('Other proficiencies & languages', area('Languages, tools, armor & weapons', 'proficiencies', 'Common, Elvish, thieves’ tools…'))}</div></div>`,
   combat: (c) =>
     /* HTML */ `<div class="combat-stats"
         >${field('Armor class', 'ac', 'number')}${field('Speed (ft)', 'speed', 'number')}${field('Initiative adjustment', 'initiativeBonus', 'number')}${field('Hit dice', 'hitDice')}${field('Hit dice remaining', 'hitDiceLeft', 'number')}</div
       ><div class="sheet-grid"
         >${panel('Attacks & actions', attackRecords(c), button('add-attack', '＋ Add attack', 'text-button'))}<div
-          >${panel('Health & recovery', `${healthControls(c)}<div class="form-grid">${field('Death save successes', 'deathSuccess', 'number', { max: 3 })}${field('Death save failures', 'deathFailure', 'number', { max: 3 })}</div>${field('Conditions', 'conditions')}${button('rest', 'Take a long rest', 'secondary full')}`)}${panel('Features & resources', area('Class features, feats & traits', 'features', 'Record your actions, traits, and limited-use abilities.') + c.resources.map((r, i) => /* HTML */ `<div class="record"><div class="record-top">${field('Resource', `resources.${i}.name`)}${button('remove', '×', 'icon-button', `data-list="resources" data-index="${i}" aria-label="Remove resource"`)}</div><div class="form-grid">${field('Remaining', `resources.${i}.remaining`, 'number')}${field('Maximum', `resources.${i}.max`, 'number')}</div></div>`).join(''), button('add-resource', '＋ Add', 'text-button'))}</div
+          >${panel('Health & recovery', `${healthControls(c)}<div class="form-grid">${field('Death save successes', 'deathSuccess', 'number', { max: 3 })}${field('Death save failures', 'deathFailure', 'number', { max: 3 })}</div>${field('Conditions', 'conditions')}${button('rest', 'Take a long rest', 'secondary full')}`)}${panel('Features & resources', area('Class features, feats & traits', 'features', 'Record your actions, traits, and limited-use abilities.') + resourceRecords(c), button('add-resource', '＋ Add', 'text-button'))}</div
         ></div
       >`,
   spells: (c) =>
@@ -1015,6 +1190,8 @@ const views = {
     >`,
   notes: journalView,
 };
+
+// Journal search, note previews, and the active note editor.
 function journalList(c) {
   const query = noteSearch.trim().toLocaleLowerCase();
   const notes = c.notes.filter(
@@ -1080,6 +1257,7 @@ function journalList(c) {
           )
     }`;
 }
+
 function renderJournalList(c) {
   const list = $('.note-list');
   if (!list) return;
@@ -1088,6 +1266,7 @@ function renderJournalList(c) {
   if (search.value !== noteSearch) search.value = noteSearch;
   $('#journal-filter').value = noteFilter;
 }
+
 function journalView(c) {
   if (journalCharacterId !== c.id) {
     journalCharacterId = c.id;
@@ -1136,6 +1315,8 @@ ${esc(n.body)}</textarea></label
     ></div
   >`;
 }
+
+// All dialogs share the same markup and styling.
 function modal(title, body, submit, label = 'Save') {
   const dialog = $('#modal');
   dialog.innerHTML = /* HTML */ `<form id="modal-form"
@@ -1168,9 +1349,36 @@ function modal(title, body, submit, label = 'Save') {
   };
   dialog.showModal();
 }
+
 function confirmAction(title, description, action, label = 'Confirm') {
   modal(title, /* HTML */ `<p>${description}</p>`, action, label);
 }
+
+function confirmEntryDeletion(character, list, index) {
+  const removableLists = ['attacks', 'resources', 'equipment', 'spells'];
+  if (!removableLists.includes(list)) return;
+  const item = character[list][index];
+  if (!item) return;
+
+  confirmAction(
+    'Delete entry?',
+    'Are you sure you want to delete this entry? You can restore it with Ctrl+Z.',
+    () => {
+      const currentIndex = character[list].indexOf(item);
+      if (currentIndex === -1) return;
+      if (list === 'attacks') editingAttack = null;
+      if (list === 'spells') editingSpell = null;
+      character[list].splice(currentIndex, 1);
+      deletedEntries.push({ character, list, index: currentIndex, item });
+      if (deletedEntries.length > 50) deletedEntries.shift();
+      changed();
+      renderCharacter();
+      toast('Entry deleted. Press Ctrl+Z to undo.');
+    },
+    'Delete',
+  );
+}
+
 function createModal() {
   modal(
     'Begin a new adventure',
@@ -1206,6 +1414,7 @@ function createModal() {
     'Create character',
   );
 }
+
 function chooseImage(callback) {
   const input = document.createElement('input');
   input.type = 'file';
@@ -1238,6 +1447,7 @@ function chooseImage(callback) {
   };
   input.click();
 }
+
 async function exportBackup() {
   clearTimeout(saveTimer);
   const backup = {
@@ -1260,6 +1470,7 @@ async function exportBackup() {
     `Backup exported with ${state.characters.length} character${state.characters.length === 1 ? '' : 's'} and all images.`,
   );
 }
+
 function imageValid(s) {
   return (
     typeof s === 'string' &&
@@ -1267,6 +1478,7 @@ function imageValid(s) {
       /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=\r\n]+$/.test(s))
   );
 }
+
 function validateBackup(input) {
   if (
     input?.format !== 'statfolio' ||
@@ -1470,6 +1682,7 @@ $('#restore-file').onchange = async (e) => {
     );
   }
 };
+
 document.addEventListener('click', async (e) => {
   const nav = e.target.closest('[data-page]');
   if (nav) {
@@ -1490,9 +1703,11 @@ document.addEventListener('click', async (e) => {
       shell();
       changed();
       break;
+
     case 'new':
       createModal();
       break;
+
     case 'open':
       state.selected = btn.dataset.id;
       page = 'overview';
@@ -1500,18 +1715,23 @@ document.addEventListener('click', async (e) => {
       shell();
       changed();
       break;
+
     case 'backup':
       await exportBackup();
       break;
+
     case 'restore':
       $('#restore-file').click();
       break;
+
     case 'close-modal':
       $('#modal').close();
       break;
+
     case 'portrait':
       chooseImage((data) => (c.image = data));
       break;
+
     case 'rename':
       modal(
         'Edit character identity',
@@ -1526,6 +1746,7 @@ document.addEventListener('click', async (e) => {
         },
       );
       break;
+
     case 'menu':
       modal(
         'Character options',
@@ -1536,6 +1757,7 @@ document.addEventListener('click', async (e) => {
         'Done',
       );
       break;
+
     case 'duplicate': {
       const copy = structuredClone(c);
       copy.id = uid();
@@ -1549,12 +1771,14 @@ document.addEventListener('click', async (e) => {
       toast('Character duplicated.');
       break;
     }
+
     case 'remove-portrait':
       c.image = '';
       $('#modal').close();
       changed();
       shell();
       break;
+
     case 'delete-character':
       $('#modal').close();
       confirmAction(
@@ -1569,6 +1793,7 @@ document.addEventListener('click', async (e) => {
         'Delete character',
       );
       break;
+
     case 'add-attack':
       c.attacks.push({ name: '', bonus: '', damage: '', type: '', notes: '' });
       editingAttack = c.attacks.at(-1);
@@ -1576,20 +1801,24 @@ document.addEventListener('click', async (e) => {
       renderCharacter();
       $('[data-attack-editor] input')?.focus();
       break;
+
     case 'edit-attack':
       editingAttack = c.attacks[Number(btn.dataset.index)];
       renderCharacter();
       $('[data-attack-editor] input')?.focus();
       break;
+
     case 'finish-attack':
       editingAttack = null;
       renderCharacter();
       break;
+
     case 'add-resource':
       c.resources.push({ name: '', remaining: 0, max: 0 });
       changed();
       renderCharacter();
       break;
+
     case 'add-spell':
       c.spells.push({
         name: '',
@@ -1607,15 +1836,18 @@ document.addEventListener('click', async (e) => {
       renderCharacter();
       $('[data-spell-editor] input')?.focus();
       break;
+
     case 'edit-spell':
       editingSpell = c.spells[Number(btn.dataset.index)];
       renderCharacter();
       $('[data-spell-editor] input')?.focus();
       break;
+
     case 'finish-spell':
       editingSpell = null;
       renderCharacter();
       break;
+
     case 'add-item':
       c.equipment.push({
         name: '',
@@ -1627,13 +1859,11 @@ document.addEventListener('click', async (e) => {
       changed();
       renderCharacter();
       break;
+
     case 'remove':
-      if (btn.dataset.list === 'attacks') editingAttack = null;
-      if (btn.dataset.list === 'spells') editingSpell = null;
-      c[btn.dataset.list].splice(Number(btn.dataset.index), 1);
-      changed();
-      renderCharacter();
+      confirmEntryDeletion(c, btn.dataset.list, Number(btn.dataset.index));
       break;
+
     case 'spend':
     case 'gain': {
       const raw = $('#currency-amount').value.trim();
@@ -1676,6 +1906,7 @@ document.addEventListener('click', async (e) => {
       $('#currency-amount').focus();
       break;
     }
+
     case 'heal':
     case 'damage': {
       const raw = $('#hp-amount').value.trim(),
@@ -1706,6 +1937,7 @@ document.addEventListener('click', async (e) => {
       $('#hp-amount').focus();
       break;
     }
+
     case 'rest':
       confirmAction(
         'Take a long rest?',
@@ -1722,6 +1954,7 @@ document.addEventListener('click', async (e) => {
         'Complete rest',
       );
       break;
+
     case 'new-note': {
       if (journalCharacterId !== c.id) {
         journalCharacterId = c.id;
@@ -1744,16 +1977,19 @@ document.addEventListener('click', async (e) => {
       $('.note-title')?.focus();
       break;
     }
+
     case 'select-note':
       noteId = btn.dataset.id;
       renderCharacter();
       break;
+
     case 'clear-note-filters':
       noteSearch = '';
       noteFilter = 'all';
       renderJournalList(c);
       $('#journal-search')?.focus();
       break;
+
     case 'delete-note':
       confirmAction(
         'Delete this note?',
@@ -1767,6 +2003,7 @@ document.addEventListener('click', async (e) => {
         'Delete note',
       );
       break;
+
     case 'note-image': {
       const n = c.notes.find((n) => n.id === noteId);
       chooseImage((data) => {
@@ -1776,6 +2013,7 @@ document.addEventListener('click', async (e) => {
       });
       break;
     }
+
     case 'remove-note-image':
       c.notes
         .find((n) => n.id === noteId)
@@ -1785,7 +2023,9 @@ document.addEventListener('click', async (e) => {
       break;
   }
 });
+
 // Closing an editor changes only its presentation; field edits already autosave.
+
 document.addEventListener('click', (event) => {
   let refresh = false;
   if (
@@ -1808,6 +2048,7 @@ document.addEventListener('click', (event) => {
   }
   if (current() && refresh) renderCharacter();
 });
+
 function refreshesValues(path) {
   return (
     path.startsWith('abilities.') ||
@@ -1826,6 +2067,7 @@ function refreshesValues(path) {
     ].includes(path)
   );
 }
+
 document.addEventListener('input', (e) => {
   const el = e.target,
     c = current();
@@ -1881,7 +2123,9 @@ document.addEventListener('input', (e) => {
     changed();
   }
 });
+
 let refreshTimer;
+
 function scheduleRefresh() {
   clearTimeout(refreshTimer);
   refreshTimer = setTimeout(() => {
@@ -1906,6 +2150,7 @@ function scheduleRefresh() {
     }
   }, 0);
 }
+
 document.addEventListener('change', (e) => {
   const el = e.target,
     c = current();
@@ -1946,15 +2191,18 @@ document.addEventListener('change', (e) => {
     if (refreshesValues(el.dataset.field)) scheduleRefresh();
   } else if (el.dataset.note) scheduleRefresh();
 });
+
 window.addEventListener('beforeunload', (e) => {
   if (revision !== savedRevision || saveFailed) {
     e.preventDefault();
     e.returnValue = '';
   }
 });
+
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) persist().catch(() => {});
 });
+
 async function init() {
   try {
     db = await new Promise((resolve, reject) => {
