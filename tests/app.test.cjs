@@ -981,6 +981,210 @@ test('notes stay with their character, escape markup, and export all images', as
   }
 });
 
+test('journal pins, custom tags, and related links work together and save independently', async () => {
+  const a = await app();
+
+  try {
+    const character = a.api.blank('Organized journal');
+    const first = {
+      id: randomUUID(),
+      title: 'Ruins',
+      body: 'An old tower',
+      tag: 'Location',
+      updated: new Date().toISOString(),
+      images: [],
+    };
+    const second = {
+      ...first,
+      id: randomUUID(),
+      title: 'Clue',
+      body: 'A hidden door',
+      images: [],
+    };
+    character.notes = [first, second];
+    a.api.use(character);
+    a.api.setPage('notes');
+
+    a.click(`[data-action="select-note"][data-id="${second.id}"]`);
+    a.click('[data-action="pin-note"]');
+    assert.equal(second.pinned, true);
+    assert.equal(a.$('.note-preview').dataset.id, second.id);
+    assert.match(a.$('.pin-label').textContent, /Pinned/);
+    assert.equal(character.notes[0].id, first.id);
+
+    a.input('[data-note="tags"]', 'Important, mystery, Important, <img src=x>');
+    await settle();
+    assert.deepEqual(Array.from(second.tags), [
+      'Important',
+      'mystery',
+      '<img src=x>',
+    ]);
+    assert.equal(a.$('.note-category img'), null);
+    a.input('#journal-filter', 'tag:mystery');
+    assert.equal(a.w.document.querySelectorAll('.note-preview').length, 1);
+    a.input('#journal-search', 'important');
+    assert.equal(a.$('.note-preview').dataset.id, second.id);
+
+    a.click('[data-action="link-notes"]');
+    a.input(`#modal input[value="${first.id}"]`, true);
+    await a.submit();
+    assert.deepEqual(Array.from(second.links), [first.id]);
+    assert.deepEqual(Array.from(first.links), [second.id]);
+    a.click(`[data-action="open-related-note"][data-id="${first.id}"]`);
+    assert.equal(a.$('[data-note="title"]').value, 'Ruins');
+    assert.equal(a.$('#journal-search').value, '');
+    assert.equal(a.$('#journal-filter').value, 'all');
+
+    a.click('[data-action="link-notes"]');
+    a.input(`#modal input[value="${second.id}"]`, false);
+    await a.submit();
+    assert.equal(first.links.length, 0);
+    assert.equal(second.links.length, 0);
+
+    a.click('[data-action="link-notes"]');
+    a.input(`#modal input[value="${second.id}"]`, true);
+    await a.submit();
+    await a.api.persist();
+    const b = await app(a.storage);
+    try {
+      const notes = b.api.current.notes;
+      assert.equal(notes[1].pinned, true);
+      assert.equal(notes[1].tags[0], 'Important');
+      assert.equal(notes[0].links[0], notes[1].id);
+      b.api.setPage('notes');
+      b.click('[data-action="delete-note"]');
+      await b.submit();
+      assert.equal(b.api.current.notes.length, 1);
+      assert.equal(b.api.current.notes[0].links.length, 0);
+    } finally {
+      b.close();
+    }
+  } finally {
+    a.close();
+  }
+});
+
+test('journal organization survives export, duplication, and merge restore with remapped links', async () => {
+  const a = await app();
+
+  try {
+    const character = a.api.blank('Linked journal');
+    const firstId = randomUUID();
+    const secondId = randomUUID();
+    character.notes = [
+      {
+        id: firstId,
+        title: 'First',
+        body: '',
+        tag: 'General',
+        updated: new Date().toISOString(),
+        images: [image],
+        pinned: true,
+        tags: ['custom'],
+        links: [secondId],
+      },
+      {
+        id: secondId,
+        title: 'Second',
+        body: '',
+        tag: 'General',
+        updated: new Date().toISOString(),
+        images: [],
+        links: [firstId],
+      },
+    ];
+    a.api.use(character);
+    await a.api.exportBackup();
+    const backup = JSON.parse(await a.download().text());
+    assert.equal(backup.characters[0].notes[0].pinned, true);
+    assert.equal(backup.characters[0].notes[0].links[0], secondId);
+
+    a.click('[data-action="library"]');
+    a.click(`[data-action="duplicate"][data-id="${character.id}"]`);
+    const copy = a.api.current;
+    assert.notEqual(copy.notes[0].id, firstId);
+    assert.equal(copy.notes[0].links[0], copy.notes[1].id);
+    assert.equal(copy.notes[1].links[0], copy.notes[0].id);
+    assert.equal(copy.notes[0].tags[0], 'custom');
+
+    await a.restore(backup.characters, 'merge');
+    const restored = a.api.state.characters.at(-1);
+    assert.notEqual(restored.notes[0].id, firstId);
+    assert.notEqual(restored.notes[0].id, copy.notes[0].id);
+    assert.equal(restored.notes[0].links[0], restored.notes[1].id);
+    assert.equal(restored.notes[1].links[0], restored.notes[0].id);
+    assert.equal(restored.notes[0].pinned, true);
+    assert.equal(restored.notes[0].images[0], image);
+
+    for (const invalid of [
+      { pinned: 'yes' },
+      { tags: ['fine', 2] },
+      { links: [123] },
+    ]) {
+      const bad = structuredClone(backup);
+      Object.assign(bad.characters[0].notes[0], invalid);
+      assert.throws(() => a.api.validateBackup(bad), /Invalid note/);
+    }
+  } finally {
+    a.close();
+  }
+});
+
+test('related note search filters without losing checked links and does not submit on Enter', async () => {
+  const a = await app();
+
+  try {
+    const character = a.api.blank('Related search');
+    const note = (title, body = '', tags = []) => ({
+      id: randomUUID(),
+      title,
+      body,
+      tag: 'General',
+      updated: new Date().toISOString(),
+      images: [],
+      tags,
+    });
+    const active = note('Current');
+    const first = note('Ruins', 'Hidden entrance');
+    const second = note('Merchant', '', ['supplies']);
+    active.links = [first.id];
+    first.links = [active.id];
+    character.notes = [active, first, second];
+    a.api.use(character);
+    a.api.setPage('notes');
+    a.click('[data-action="link-notes"]');
+
+    a.input('#related-notes-search', ' SUPPLIES ');
+    assert.equal(a.$(`[data-note-link="${first.id}"]`).hidden, true);
+    assert.equal(a.$(`[data-note-link="${second.id}"]`).hidden, false);
+    a.input(`#modal input[value="${second.id}"]`, true);
+    a.input('#related-notes-search', 'hidden entrance');
+    assert.equal(a.$(`[data-note-link="${first.id}"]`).hidden, false);
+    assert.equal(a.$(`#modal input[value="${second.id}"]`).checked, true);
+    a.input('#related-notes-search', 'no such note');
+    assert.equal(a.$('#related-notes-empty').hidden, false);
+    const enter = new a.w.KeyboardEvent('keydown', {
+      key: 'Enter',
+      bubbles: true,
+      cancelable: true,
+    });
+    a.$('#related-notes-search').dispatchEvent(enter);
+    assert.equal(enter.defaultPrevented, true);
+    assert.equal(a.$('#modal').open, true);
+    a.input('#related-notes-search', '');
+    assert.equal(a.$('#related-notes-empty').hidden, true);
+    assert.equal(
+      a.w.document.querySelectorAll('[data-note-link]:not([hidden])').length,
+      2,
+    );
+    await a.submit();
+    assert.deepEqual(Array.from(active.links), [first.id, second.id]);
+    assert.deepEqual(Array.from(second.links), [active.id]);
+  } finally {
+    a.close();
+  }
+});
+
 test('journal search combines with category filters without deleting or switching the open note', async () => {
   const a = await app();
   try {

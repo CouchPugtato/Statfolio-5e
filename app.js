@@ -886,6 +886,11 @@ function undoDeletedEntry(event) {
 }
 
 document.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' && event.target.id === 'related-notes-search') {
+    event.preventDefault();
+    return;
+  }
+
   if (undoDeletedEntry(event)) return;
   handleNoteListKey(event);
   if (event.key === 'Escape') hideSpellPopup();
@@ -1194,13 +1199,51 @@ const views = {
 };
 
 // Journal search, note previews, and the active note editor.
+function journalTags(character) {
+  return [...new Set(character.notes.flatMap((note) => note.tags || []))].sort(
+    (a, b) => a.localeCompare(b),
+  );
+}
+
+function remapNoteIds(character) {
+  const ids = new Map(character.notes.map((note) => [note.id, uid()]));
+
+  for (const note of character.notes) {
+    note.id = ids.get(note.id);
+    if (note.links)
+      note.links = note.links.map((id) => ids.get(id)).filter(Boolean);
+  }
+}
+
+function relatedNotes(character, note) {
+  const linked = character.notes.filter((other) =>
+    note.links?.includes(other.id),
+  );
+
+  return /* HTML */ `<div class="related-notes"
+    ><div class="related-notes-heading"
+      ><span>Related notes</span
+      >${button('link-notes', 'Manage links', 'text-button')}</div
+    ><div class="note-links"
+      >${linked.length ? linked.map((other) => button('open-related-note', esc(other.title || 'Untitled note'), 'secondary', `data-id="${other.id}"`)).join('') : '<span class="muted">No linked notes.</span>'}</div
+    ></div
+  >`;
+}
+
 function journalList(c) {
   const query = noteSearch.trim().toLocaleLowerCase();
-  const notes = c.notes.filter(
-    (n) =>
-      (noteFilter === 'all' || n.tag === noteFilter) &&
-      `${n.title} ${n.body} ${n.tag}`.toLocaleLowerCase().includes(query),
-  );
+  const notes = c.notes
+    .filter(
+      (n) =>
+        (noteFilter === 'all' ||
+          (noteFilter.startsWith('tag:')
+            ? n.tags?.includes(noteFilter.slice(4))
+            : n.tag === noteFilter)) &&
+        `${n.title} ${n.body} ${n.tag} ${(n.tags || []).join(' ')}`
+          .toLocaleLowerCase()
+          .includes(query),
+    )
+    .sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned));
   return /* HTML */ `<div class="panel-heading"
       ><h2>Character journal</h2
       >${button('new-note', '＋ New', 'text-button')}</div
@@ -1211,9 +1254,18 @@ function journalList(c) {
         aria-label="Search journal notes"
         placeholder="Search notes…"
         value="${esc(noteSearch)}"
-      /><select id="journal-filter" aria-label="Filter notes by category"
+      /><select id="journal-filter" aria-label="Filter notes by category or tag"
         ><option value="all">All categories</option
-        >${noteCategories.map((tag) => /* HTML */ `<option ${noteFilter === tag ? 'selected' : ''}>${tag}</option>`).join('')}</select
+        >${noteCategories.map((tag) => /* HTML */ `<option ${noteFilter === tag ? 'selected' : ''}>${tag}</option>`).join('')}${
+          journalTags(c).length
+            ? `<optgroup label="Custom tags">${journalTags(c)
+                .map(
+                  (tag) =>
+                    `<option value="tag:${esc(tag)}" ${noteFilter === `tag:${tag}` ? 'selected' : ''}>${esc(tag)}</option>`,
+                )
+                .join('')}</optgroup>`
+            : ''
+        }</select
       ></div
     ><p class="journal-count" role="status"
       >${notes.length === c.notes.length ? `${notes.length} note${notes.length === 1 ? '' : 's'}` : `${notes.length} of ${c.notes.length} notes`}</p
@@ -1228,7 +1280,8 @@ function journalList(c) {
                   data-id="${item.id}"
                   aria-pressed="${noteId === item.id}"
                   ><div class="note-preview-heading"
-                    ><strong>${esc(item.title || 'Untitled note')}</strong
+                    ><strong
+                      >${item.pinned ? '<span class="pin-label">Pinned · </span>' : ''}${esc(item.title || 'Untitled note')}</strong
                     ><time
                       datetime="${esc(item.updated)}"
                       title="${esc(new Date(item.updated).toLocaleString())}"
@@ -1236,7 +1289,7 @@ function journalList(c) {
                     ></div
                   ><span class="note-preview-excerpt"
                     ><span class="note-category"
-                      >${esc(item.tag || 'General')}</span
+                      >${esc([item.tag || 'General', ...(item.tags || [])].join(' · '))}</span
                     ><span
                       >${esc(item.body.replace(/\s+/g, ' ').slice(0, 160) || 'No text yet.')}</span
                     ></span
@@ -1275,6 +1328,12 @@ function journalView(c) {
     noteSearch = '';
     noteFilter = 'all';
   }
+  if (
+    noteFilter.startsWith('tag:') &&
+    !journalTags(c).includes(noteFilter.slice(4))
+  ) {
+    noteFilter = 'all';
+  }
   const n = c.notes.find((n) => n.id === noteId) || c.notes[0];
   if (n) noteId = n.id;
   return /* HTML */ `<div class="journal"
@@ -1284,7 +1343,9 @@ function journalView(c) {
         n
           ? /* HTML */ `<div class="panel-heading"
                 ><span class="eyebrow">Note details</span
-                >${button('delete-note', 'Delete note', 'text-button danger')}</div
+                ><div class="note-editor-actions"
+                  >${button('pin-note', n.pinned ? 'Unpin note' : 'Pin note', 'text-button', `aria-pressed="${!!n.pinned}"`)}${button('delete-note', 'Delete note', 'text-button danger')}</div
+                ></div
               ><label class="field"
                 ><span>Title</span
                 ><input
@@ -1298,6 +1359,12 @@ function journalView(c) {
                   >${noteCategories.map((t) => /* HTML */ `<option ${n.tag === t ? 'selected' : ''}>${t}</option>`).join('')}</select
                 ></label
               ><label class="field"
+                ><span>Tags</span
+                ><input
+                  data-note="tags"
+                  value="${esc((n.tags || []).join(', '))}"
+                  placeholder="Separate tags with commas" /></label
+              ><label class="field"
                 ><span>Notes</span
                 ><textarea
                   class="note-body"
@@ -1305,7 +1372,7 @@ function journalView(c) {
                   placeholder="Write your notes here…"
                 >
 ${esc(n.body)}</textarea></label
-              ><div class="note-attachments"
+              >${relatedNotes(c, n)}<div class="note-attachments"
                 >${(n.images || []).map((img, i) => /* HTML */ `<div><img src="${esc(img)}" alt="Journal attachment ${i + 1}" /><button data-action="remove-note-image" data-index="${i}" aria-label="Remove attachment">×</button></div>`).join('')}</div
               >${button('note-image', '＋ Attach image', 'secondary')}`
           : empty(
@@ -1618,10 +1685,46 @@ function validateBackup(input) {
           )
             throw Error('Invalid note images.');
           clean.images = item.images || [];
+          if (item.pinned !== undefined) {
+            if (typeof item.pinned !== 'boolean')
+              throw Error('Invalid note pin.');
+            clean.pinned = item.pinned;
+          }
+
+          if (item.tags !== undefined) {
+            if (
+              !Array.isArray(item.tags) ||
+              item.tags.some((tag) => typeof tag !== 'string')
+            )
+              throw Error('Invalid note tags.');
+            clean.tags = [
+              ...new Set(item.tags.map((tag) => tag.trim()).filter(Boolean)),
+            ];
+          }
+
+          if (item.links !== undefined) {
+            if (
+              !Array.isArray(item.links) ||
+              item.links.some(
+                (id) =>
+                  typeof id !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(id),
+              )
+            )
+              throw Error('Invalid note links.');
+            clean.links = [...new Set(item.links)].filter(
+              (id) => id !== item.id,
+            );
+          }
         }
         return clean;
       });
     }
+    const validNoteIds = new Set(c.notes.map((note) => note.id));
+    for (const note of c.notes) {
+      if (note.links)
+        note.links = note.links.filter((id) => validNoteIds.has(id));
+    }
+
     return c;
   });
 }
@@ -1659,7 +1762,7 @@ $('#restore-file').onchange = async (e) => {
         if (data.get('mode') === 'merge') {
           copies.forEach((c) => {
             c.id = uid();
-            c.notes.forEach((n) => (n.id = uid()));
+            remapNoteIds(c);
           });
           state.characters.push(...copies);
         } else state.characters = copies;
@@ -1769,7 +1872,7 @@ document.addEventListener('click', async (e) => {
       const copy = structuredClone(source);
       copy.id = uid();
       copy.name += ' (copy)';
-      copy.notes.forEach((n) => (n.id = uid()));
+      remapNoteIds(copy);
       state.characters.push(copy);
       state.selected = copy.id;
       if ($('#modal').open) $('#modal').close();
@@ -1972,7 +2075,13 @@ document.addEventListener('click', async (e) => {
         id: uid(),
         title: '',
         body: '',
-        tag: noteFilter === 'all' ? 'General' : noteFilter,
+        tag:
+          noteFilter === 'all' || noteFilter.startsWith('tag:')
+            ? 'General'
+            : noteFilter,
+        pinned: false,
+        tags: noteFilter.startsWith('tag:') ? [noteFilter.slice(4)] : [],
+        links: [],
         updated: new Date().toISOString(),
         images: [],
       };
@@ -1990,6 +2099,52 @@ document.addEventListener('click', async (e) => {
       renderCharacter();
       break;
 
+    case 'pin-note': {
+      const note = c.notes.find((note) => note.id === noteId);
+      if (!note) break;
+      note.pinned = !note.pinned;
+      note.updated = new Date().toISOString();
+      changed();
+      renderCharacter();
+      break;
+    }
+
+    case 'open-related-note':
+      if (!c.notes.some((note) => note.id === btn.dataset.id)) break;
+      noteId = btn.dataset.id;
+      noteSearch = '';
+      noteFilter = 'all';
+      renderCharacter();
+      break;
+
+    case 'link-notes': {
+      const note = c.notes.find((note) => note.id === noteId);
+      if (!note) break;
+      const others = c.notes.filter((other) => other !== note);
+
+      modal(
+        'Related notes',
+        others.length
+          ? `<input id="related-notes-search" type="search" aria-label="Search related notes" placeholder="Search notes…" /><div class="note-link-options">${others.map((other) => `<label class="check" data-note-link="${other.id}"><input type="checkbox" name="links" value="${other.id}" ${note.links?.includes(other.id) ? 'checked' : ''} /><span>${esc(other.title || 'Untitled note')}</span></label>`).join('')}</div><p id="related-notes-empty" role="status" hidden>No matching notes.</p>`
+          : '<p>Create another note to link it here.</p>',
+        (data) => {
+          const links = new Set(data.getAll('links'));
+          note.links = others
+            .filter((other) => links.has(other.id))
+            .map((other) => other.id);
+          note.updated = new Date().toISOString();
+          for (const other of others) {
+            other.links = (other.links || []).filter((id) => id !== note.id);
+            if (links.has(other.id)) other.links.push(note.id);
+          }
+          changed();
+          renderCharacter();
+        },
+        'Save links',
+      );
+      break;
+    }
+
     case 'clear-note-filters':
       noteSearch = '';
       noteFilter = 'all';
@@ -2003,6 +2158,10 @@ document.addEventListener('click', async (e) => {
         'This removes the note and its attached images.',
         () => {
           c.notes = c.notes.filter((n) => n.id !== noteId);
+          for (const note of c.notes) {
+            if (note.links)
+              note.links = note.links.filter((id) => id !== noteId);
+          }
           noteId = null;
           changed();
           shell();
@@ -2089,6 +2248,21 @@ document.addEventListener('input', (e) => {
     return;
   }
   if (!c) return;
+  if (el.id === 'related-notes-search') {
+    const query = el.value.trim().toLocaleLowerCase();
+    const notesById = new Map(c.notes.map((note) => [note.id, note]));
+    let matches = 0;
+
+    for (const option of document.querySelectorAll('#modal [data-note-link]')) {
+      const note = notesById.get(option.dataset.noteLink);
+      const text = `${note.title || 'Untitled note'} ${note.body} ${note.tag} ${(note.tags || []).join(' ')}`;
+      option.hidden = !text.toLocaleLowerCase().includes(query);
+      if (!option.hidden) matches++;
+    }
+
+    $('#related-notes-empty').hidden = matches > 0;
+    return;
+  }
   if (el.id === 'skill-search') {
     skillSearch = el.value;
     renderCharacter();
@@ -2125,7 +2299,17 @@ document.addEventListener('input', (e) => {
   }
   if (el.dataset.note) {
     const n = c.notes.find((n) => n.id === noteId);
-    n[el.dataset.note] = el.value;
+    n[el.dataset.note] =
+      el.dataset.note === 'tags'
+        ? [
+            ...new Set(
+              el.value
+                .split(',')
+                .map((tag) => tag.trim())
+                .filter(Boolean),
+            ),
+          ]
+        : el.value;
     n.updated = new Date().toISOString();
     changed();
   }

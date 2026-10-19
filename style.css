@@ -1352,6 +1352,70 @@ input[type='number'],
   font-size: 15px;
 }
 
+.note-editor-actions,
+.related-notes-heading,
+.note-links {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+}
+
+.note-editor-actions {
+  justify-content: flex-end;
+}
+
+.pin-label {
+  color: var(--accent);
+  font-size: 12px;
+}
+
+.note-category {
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.related-notes {
+  border-top: 1px solid var(--line);
+  padding-top: var(--field-gap);
+}
+
+.related-notes-heading {
+  justify-content: space-between;
+  margin-bottom: 10px;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.note-links > button {
+  padding: 6px 10px;
+  min-height: 32px;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+.note-link-options {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 50dvh;
+  overflow-y: auto;
+}
+
+.note-link-options .check {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.note-link-options .check[hidden] {
+  display: none;
+}
+
 .note-attachments {
   display: flex;
   flex-wrap: wrap;
