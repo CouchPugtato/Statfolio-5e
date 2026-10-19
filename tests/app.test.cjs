@@ -91,6 +91,225 @@ async function app(storage = new IDBFactory()) {
   };
 }
 
+test('condition tracker selects conditions, expands references, tracks exhaustion, and preserves notes', async () => {
+  const a = await app();
+
+  try {
+    const character = a.api.blank('Conditions');
+    character.conditions = 'A custom curse until dawn';
+    a.api.use(character);
+    a.api.setPage('combat');
+    assert.equal(a.$('#condition-picker').hidden, true);
+    assert.equal(
+      a.$('[data-field="conditions"]').value,
+      'A custom curse until dawn',
+    );
+    a.click('[data-action="toggle-conditions"]');
+    const blindedRules = a
+      .$('[data-condition="Blinded"]')
+      .closest('.condition-option')
+      .querySelector('details');
+    blindedRules.open = true;
+    assert.match(blindedRules.textContent, /Sight-based ability checks/);
+    a.input('[data-condition="Blinded"]', true);
+    a.input('[data-condition="Poisoned"]', true);
+    assert.deepEqual(Array.from(character.activeConditions), [
+      'Blinded',
+      'Poisoned',
+    ]);
+    assert.match(a.$('#active-conditions').textContent, /Blinded/);
+    assert.equal(a.$('#condition-picker').hidden, false);
+    a.input('[data-field="exhaustionLevel"]', 3);
+    assert.equal(character.exhaustionLevel, 3);
+    assert.match(a.$('#active-conditions').textContent, /Exhaustion 3/);
+    assert.equal(character.speed, 30);
+    assert.equal(character.maxHp, 10);
+
+    a.input('[data-field="ac"]', 12);
+    await settle();
+    assert.equal(a.$('#condition-picker').hidden, false);
+    assert.equal(
+      a
+        .$('[data-condition="Blinded"]')
+        .closest('.condition-option')
+        .querySelector('details').open,
+      true,
+    );
+    a.input('[data-condition="Blinded"]', false);
+    a.input('[data-field="exhaustionLevel"]', 0);
+    assert.deepEqual(Array.from(character.activeConditions), ['Poisoned']);
+    assert.doesNotMatch(a.$('#active-conditions').textContent, /Exhaustion/);
+    await a.api.persist();
+
+    const b = await app(a.storage);
+    try {
+      b.api.setPage('combat');
+      assert.equal(b.$('[data-condition="Poisoned"]').checked, true);
+      assert.equal(b.api.current.conditions, 'A custom curse until dawn');
+    } finally {
+      b.close();
+    }
+  } finally {
+    a.close();
+  }
+});
+
+test('condition plus chip opens a dismissible pop-out and active chips show hover rules', async () => {
+  const a = await app();
+
+  try {
+    const character = a.api.blank('Condition popups');
+    character.activeConditions = ['Blinded'];
+    character.exhaustionLevel = 2;
+    a.api.use(character);
+    a.api.setPage('combat');
+    const plus = a.$('[data-action="toggle-conditions"]');
+    assert.equal(a.$('#active-conditions').lastElementChild, plus);
+    a.click('[data-action="toggle-conditions"]');
+    assert.equal(a.$('#condition-picker').hidden, false);
+    assert.equal(plus.getAttribute('aria-expanded'), 'true');
+    a.w.document.body.click();
+    assert.equal(a.$('#condition-picker').hidden, true);
+    assert.equal(plus.getAttribute('aria-expanded'), 'false');
+    a.click('[data-action="toggle-conditions"]');
+    a.$('#condition-picker').dispatchEvent(
+      new a.w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+    );
+    assert.equal(a.$('#condition-picker').hidden, true);
+    assert.equal(a.w.document.activeElement, plus);
+
+    const chip = a.$('[data-condition-reference="Blinded"]');
+    chip.dispatchEvent(new a.w.MouseEvent('pointerover', { bubbles: true }));
+    const popup = a.$('.spell-popup');
+    assert.equal(popup.hidden, false);
+    assert.equal(a.$('.spell-popup-title').textContent, 'Blinded');
+    assert.match(a.$('.spell-popup-description').textContent, /Sight-based/);
+    chip.dispatchEvent(
+      new a.w.MouseEvent('pointerout', { bubbles: true, relatedTarget: popup }),
+    );
+    assert.equal(popup.hidden, true);
+    chip.focus();
+    assert.equal(popup.hidden, false);
+    chip.dispatchEvent(
+      new a.w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+    );
+    assert.equal(popup.hidden, true);
+    a.$('[data-condition-reference="Exhaustion"]').focus();
+    assert.equal(a.$('.spell-popup-title').textContent, 'Exhaustion 2');
+    assert.match(
+      a.$('.spell-popup-description').textContent,
+      /Effects accumulate/,
+    );
+    a.click('[data-condition-reference="Blinded"]');
+    assert.equal(character.activeConditions.length, 0);
+    assert.equal(a.$('[data-condition-reference="Blinded"]'), null);
+    assert.equal(popup.hidden, true);
+    assert.equal(a.$('[data-condition="Blinded"]').checked, false);
+    a.click('[data-condition-reference="Exhaustion"]');
+    assert.equal(character.exhaustionLevel, 0);
+    assert.equal(a.$('[data-field="exhaustionLevel"]').value, '0');
+    assert.match(a.$('#active-conditions').textContent, /No active conditions/);
+    await a.api.persist();
+    const reopened = await app(a.storage);
+    try {
+      assert.equal(reopened.api.current.activeConditions.length, 0);
+      assert.equal(reopened.api.current.exhaustionLevel, 0);
+    } finally {
+      reopened.close();
+    }
+  } finally {
+    a.close();
+  }
+});
+
+test('condition search preserves selections and survives nearby stat edits', async () => {
+  const a = await app();
+
+  try {
+    const character = a.api.blank('Condition search');
+    character.activeConditions = ['Prone'];
+    a.api.use(character);
+    a.api.setPage('combat');
+    a.click('[data-action="toggle-conditions"]');
+    assert.equal(a.w.document.activeElement, a.$('#condition-search'));
+    a.input('#condition-search', ' BLINDED ');
+    assert.equal(
+      a.w.document.querySelectorAll('.condition-option:not([hidden])').length,
+      1,
+    );
+    assert.equal(a.$('[data-condition="Prone"]').checked, true);
+    a.input('[data-condition="Blinded"]', true);
+    a.input('[data-field="ac"]', 15);
+    await settle();
+    assert.equal(a.$('#condition-search').value, ' BLINDED ');
+    assert.equal(
+      a.w.document.querySelectorAll('.condition-option:not([hidden])').length,
+      1,
+    );
+    assert.equal(a.$('[data-condition="Blinded"]').checked, true);
+    a.input('#condition-search', 'nonexistent condition');
+    assert.equal(a.$('#condition-search-empty').hidden, false);
+    a.input('#condition-search', '');
+    assert.equal(a.$('#condition-search-empty').hidden, true);
+    assert.equal(
+      a.w.document.querySelectorAll('.condition-option:not([hidden])').length,
+      15,
+    );
+    assert.deepEqual(Array.from(character.activeConditions), [
+      'Prone',
+      'Blinded',
+    ]);
+  } finally {
+    a.close();
+  }
+});
+
+test('conditions support old backups, duplication, and restore with strict validation', async () => {
+  const a = await app();
+
+  try {
+    const character = a.api.blank('Condition backup');
+    character.conditions = 'Existing condition notes';
+    character.activeConditions = ['Prone'];
+    character.exhaustionLevel = 2;
+    a.api.use(character);
+    await a.api.exportBackup();
+    const backup = JSON.parse(await a.download().text());
+    await a.restore(backup.characters, 'replace');
+    assert.deepEqual(Array.from(a.api.state.characters[0].activeConditions), [
+      'Prone',
+    ]);
+    assert.equal(a.api.state.characters[0].exhaustionLevel, 2);
+    a.click(`[data-action="duplicate"][data-id="${character.id}"]`);
+    assert.deepEqual(Array.from(a.api.current.activeConditions), ['Prone']);
+    a.api.current.activeConditions.push('Poisoned');
+    assert.deepEqual(Array.from(a.api.state.characters[0].activeConditions), [
+      'Prone',
+    ]);
+
+    for (const invalid of [
+      { activeConditions: ['Unknown'] },
+      { activeConditions: ['Exhaustion'] },
+      { activeConditions: [2] },
+      { exhaustionLevel: 7 },
+      { exhaustionLevel: 1.5 },
+    ]) {
+      const bad = structuredClone(backup);
+      Object.assign(bad.characters[0], invalid);
+      assert.throws(() => a.api.validateBackup(bad), /Invalid conditions/);
+    }
+
+    delete backup.characters[0].activeConditions;
+    delete backup.characters[0].exhaustionLevel;
+    const legacy = a.api.validateBackup(backup)[0];
+    assert.equal(legacy.activeConditions.length, 0);
+    assert.equal(legacy.exhaustionLevel, 0);
+    assert.equal(legacy.conditions, 'Existing condition notes');
+  } finally {
+    a.close();
+  }
+});
+
 test('backup reminders use age and completed edits while ignoring navigation and individual keystrokes', async () => {
   const a = await app();
 

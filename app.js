@@ -62,6 +62,66 @@ const noteCategories = [
   'Lore',
 ];
 
+// Paraphrased from SRD 5.1 (2014 rules). See RULES-LICENSE.md.
+const conditionRules = {
+  Blinded: [
+    'Sight-based ability checks fail automatically. You cannot see.',
+    'Your attacks have disadvantage; attacks against you have advantage.',
+  ],
+  Charmed: [
+    'You cannot attack the charmer or direct harmful abilities or magic at them.',
+    'The charmer has advantage on social ability checks involving you.',
+  ],
+  Deafened: [
+    'You cannot hear. Hearing-based ability checks fail automatically.',
+  ],
+  Exhaustion: [
+    'Effects accumulate: level 1, disadvantage on ability checks; level 2, half speed; level 3, disadvantage on attacks and saves; level 4, half maximum HP; level 5, speed 0; level 6, death.',
+    'A long rest removes one level if you also had food and drink. Track recovery manually here.',
+  ],
+  Frightened: [
+    'While you can see the source of your fear, your attacks and ability checks have disadvantage.',
+    'You cannot willingly approach the source of your fear.',
+  ],
+  Grappled: [
+    'Your speed is 0, including speed bonuses.',
+    'Ends if the grappler becomes incapacitated or an effect puts you outside the grappler’s reach.',
+  ],
+  Incapacitated: ['You cannot take actions or reactions.'],
+  Invisible: [
+    'Normal sight cannot detect you; hiding treats you as heavily obscured. Noise and tracks can still reveal your location.',
+    'Your attacks have advantage; attacks against you have disadvantage.',
+  ],
+  Paralyzed: [
+    'You are incapacitated and cannot move or speak.',
+    'Strength and Dexterity saves fail automatically. Attacks against you have advantage; a hit is critical if the attacker is within 5 feet.',
+  ],
+  Petrified: [
+    'Your body and carried nonmagical objects become solid material; weight multiplies by 10 and aging stops.',
+    'You are incapacitated, cannot move or speak, and do not perceive your surroundings.',
+    'Strength and Dexterity saves fail automatically; attacks against you have advantage.',
+    'You resist all damage and are immune to poison and disease. Existing poison or disease is suspended.',
+  ],
+  Poisoned: ['Your attacks and ability checks have disadvantage.'],
+  Prone: [
+    'You can crawl or stand to end this condition; standing normally costs half your speed.',
+    'Your attacks have disadvantage. Attacks against you have advantage within 5 feet, and disadvantage from farther away.',
+  ],
+  Restrained: [
+    'Your speed is 0, including speed bonuses.',
+    'Your attacks and Dexterity saves have disadvantage; attacks against you have advantage.',
+  ],
+  Stunned: [
+    'You are incapacitated, cannot move, and can only speak with difficulty.',
+    'Strength and Dexterity saves fail automatically; attacks against you have advantage.',
+  ],
+  Unconscious: [
+    'You are incapacitated, cannot move or speak, and do not perceive your surroundings.',
+    'You drop held objects and fall prone.',
+    'Strength and Dexterity saves fail automatically. Attacks against you have advantage; a hit is critical if the attacker is within 5 feet.',
+  ],
+};
+
 // View state stays in memory; character data is saved to IndexedDB.
 
 let noteSearch = '';
@@ -202,6 +262,8 @@ function blank(name = 'New adventurer') {
     deathSuccess: 0,
     deathFailure: 0,
     conditions: '',
+    activeConditions: [],
+    exhaustionLevel: 0,
 
     attacks: [],
     resources: [],
@@ -656,6 +718,84 @@ function healthControls(c) {
     >`;
 }
 
+function activeConditionChips(character) {
+  const active = (character.activeConditions || []).map((name) => ({
+    name,
+    label: name,
+  }));
+  if (character.exhaustionLevel)
+    active.push({
+      name: 'Exhaustion',
+      label: `Exhaustion ${character.exhaustionLevel}`,
+    });
+
+  const chips = active.length
+    ? active
+        .map(({ name, label }) =>
+          button(
+            'remove-condition',
+            esc(label),
+            'condition-chip',
+            `data-condition-reference="${name}" aria-label="Remove ${esc(label)}"`,
+          ),
+        )
+        .join('')
+    : '<span class="condition-chip condition-empty">No active conditions</span>';
+
+  return `${chips}${button('toggle-conditions', '+', 'condition-chip condition-add', `aria-label="Manage conditions" aria-haspopup="dialog" aria-controls="condition-picker" aria-expanded="${$('#condition-picker')?.hidden === false}"`)}`;
+}
+
+function conditionsTracker(character) {
+  const pickerOpen = $('#condition-picker')?.hidden === false;
+  const query = $('#condition-search')?.value || '';
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  let matches = 0;
+  const options = Object.entries(conditionRules)
+    .map(([name, rules], index) => {
+      const ruleId = `condition-rule-${index}`;
+      const ruleOpen = $(`#${ruleId}`)?.open;
+      const control =
+        name === 'Exhaustion'
+          ? `<label class="condition-exhaustion"><span>Exhaustion</span><select data-field="exhaustionLevel" data-number="true" aria-label="Exhaustion level">${Array.from({ length: 7 }, (_, level) => `<option value="${level}" ${character.exhaustionLevel === level ? 'selected' : ''}>${level === 0 ? 'None' : `Level ${level}`}</option>`).join('')}</select></label>`
+          : `<label class="check"><input type="checkbox" data-condition="${name}" ${(character.activeConditions || []).includes(name) ? 'checked' : ''} /><span>${name}</span></label>`;
+
+      const visible = `${name} ${rules.join(' ')}`
+        .toLocaleLowerCase()
+        .includes(normalizedQuery);
+      if (visible) matches++;
+
+      return `<div class="condition-option" ${visible ? '' : 'hidden'}>${control}<details class="condition-rule" id="${ruleId}" ${ruleOpen ? 'open' : ''}><summary aria-label="${name} rules">Rules</summary><ul>${rules.map((rule) => `<li>${esc(rule)}</li>`).join('')}</ul></details></div>`;
+    })
+    .join('');
+
+  return `<div class="condition-tracker"><span class="condition-heading">Conditions</span><div class="condition-controls"><div id="active-conditions" class="condition-active">${activeConditionChips(character)}</div><div id="condition-picker" role="dialog" aria-label="Manage conditions" ${pickerOpen ? '' : 'hidden'}><div class="condition-picker-heading"><strong>Conditions</strong>${button('close-conditions', '×', 'icon-button', 'aria-label="Close conditions"')}</div><p class="help">2014 5e reference. Apply effects to rolls and stats manually.</p><input id="condition-search" type="search" aria-label="Search conditions" placeholder="Search conditions…" value="${esc(query)}" /><div class="condition-options">${options}</div><p id="condition-search-empty" class="help" role="status" ${matches ? 'hidden' : ''}>No matching conditions.</p><p class="help"><a href="./RULES-LICENSE.md" target="_blank" rel="noopener">SRD 5.1 attribution</a></p></div></div>${field('Condition notes', 'conditions')}</div>`;
+}
+
+function filterConditions(query) {
+  const normalized = query.trim().toLocaleLowerCase();
+  let matches = 0;
+
+  for (const option of document.querySelectorAll(
+    '#condition-picker .condition-option',
+  )) {
+    option.hidden = !option.textContent
+      .toLocaleLowerCase()
+      .includes(normalized);
+    if (!option.hidden) matches++;
+  }
+
+  $('#condition-search-empty').hidden = matches > 0;
+}
+
+function closeConditionsPicker() {
+  const picker = $('#condition-picker');
+  if (picker) picker.hidden = true;
+  $('[data-action="toggle-conditions"]')?.setAttribute(
+    'aria-expanded',
+    'false',
+  );
+}
+
 const coinValues = { cp: 1, sp: 10, ep: 50, gp: 100, pp: 1000 };
 
 function parseCurrency(raw, defaultUnit) {
@@ -854,6 +994,19 @@ function showSpellPopup(card) {
     hideSpellPopup();
     return;
   }
+  showReferencePopup(
+    card,
+    spell.name.trim() || 'Unnamed spell',
+    spell.description,
+  );
+}
+
+function showConditionPopup(chip) {
+  const rules = conditionRules[chip.dataset.conditionReference];
+  if (rules) showReferencePopup(chip, chip.textContent, rules.join('\n\n'));
+}
+
+function showReferencePopup(card, title, descriptionText) {
   if (spellPopupCard === card && !spellPopup.hidden) return;
   hideSpellPopup();
   if (!spellPopup) {
@@ -869,9 +1022,8 @@ function showSpellPopup(card) {
     spellPopup.append(heading, description);
     document.body.append(spellPopup);
   }
-  $('.spell-popup-title', spellPopup).textContent =
-    spell.name.trim() || 'Unnamed spell';
-  $('.spell-popup-description', spellPopup).textContent = spell.description;
+  $('.spell-popup-title', spellPopup).textContent = title;
+  $('.spell-popup-description', spellPopup).textContent = descriptionText;
   spellPopup.hidden = false;
   spellPopupCard = card;
   card.setAttribute('aria-describedby', spellPopup.id);
@@ -899,6 +1051,8 @@ document.addEventListener('pointerover', (event) => {
   if (event.pointerType === 'touch') return;
   const card = event.target.closest('.spell-record-summary');
   if (card) showSpellPopup(card);
+  const chip = event.target.closest('[data-condition-reference]');
+  if (chip) showConditionPopup(chip);
 });
 
 document.addEventListener('pointerout', (event) => {
@@ -914,7 +1068,9 @@ document.addEventListener('pointerout', (event) => {
 
 document.addEventListener('focusin', (event) => {
   const card = event.target.closest('.spell-record-summary');
+  const chip = event.target.closest('[data-condition-reference]');
   if (card) showSpellPopup(card);
+  else if (chip) showConditionPopup(chip);
   else if (!spellPopup?.contains(event.target)) hideSpellPopup();
 });
 
@@ -968,7 +1124,13 @@ document.addEventListener('keydown', (event) => {
 
   if (undoDeletedEntry(event)) return;
   handleNoteListKey(event);
-  if (event.key === 'Escape') hideSpellPopup();
+  if (event.key === 'Escape') {
+    hideSpellPopup();
+    if ($('#condition-picker')?.hidden === false) {
+      closeConditionsPicker();
+      $('[data-action="toggle-conditions"]')?.focus();
+    }
+  }
   if (
     event.key === 'Enter' &&
     event.target.id === 'currency-amount' &&
@@ -1197,10 +1359,10 @@ const views = {
     )}<div>${panel('Saving throws', savingThrows(c))}${panel('Other proficiencies & languages', area('Languages, tools, armor & weapons', 'proficiencies', 'Common, Elvish, thieves’ tools…'))}</div></div>`,
   combat: (c) =>
     /* HTML */ `<div class="combat-stats"
-        >${field('Armor class', 'ac', 'number')}${field('Speed (ft)', 'speed', 'number')}${field('Initiative adjustment', 'initiativeBonus', 'number')}${field('Hit dice', 'hitDice')}${field('Hit dice remaining', 'hitDiceLeft', 'number')}</div
+        >${field('Armor class', 'ac', 'number')}${field('Speed (ft)', 'speed', 'number')}${field('Initiative adjustment', 'initiativeBonus', 'number')}${field('Hit dice remaining', 'hitDiceLeft', 'number')}${field('Hit dice', 'hitDice')}</div
       ><div class="sheet-grid"
         >${panel('Attacks & actions', attackRecords(c), button('add-attack', '＋ Add attack', 'text-button'))}<div
-          >${panel('Health & recovery', `${healthControls(c)}<div class="form-grid">${field('Death save successes', 'deathSuccess', 'number', { max: 3 })}${field('Death save failures', 'deathFailure', 'number', { max: 3 })}</div>${field('Conditions', 'conditions')}${button('rest', 'Take a long rest', 'secondary full')}`)}${panel('Features & resources', area('Class features, feats & traits', 'features', 'Record your actions, traits, and limited-use abilities.') + resourceRecords(c), button('add-resource', '＋ Add', 'text-button'))}</div
+          >${panel('Health & recovery', `${healthControls(c)}<div class="form-grid">${field('Death save successes', 'deathSuccess', 'number', { max: 3 })}${field('Death save failures', 'deathFailure', 'number', { max: 3 })}</div>${conditionsTracker(c)}${button('rest', 'Take a long rest', 'secondary full')}`)}${panel('Features & resources', area('Class features, feats & traits', 'features', 'Record your actions, traits, and limited-use abilities.') + resourceRecords(c), button('add-resource', '＋ Add', 'text-button'))}</div
         ></div
       >`,
   spells: (c) =>
@@ -1707,6 +1869,20 @@ function validateBackup(input) {
       throw Error(
         'Invalid character scores, slots, proficiencies, or portrait.',
       );
+    if (
+      c.activeConditions.some(
+        (name) =>
+          typeof name !== 'string' ||
+          name === 'Exhaustion' ||
+          !Object.hasOwn(conditionRules, name),
+      ) ||
+      !Number.isInteger(c.exhaustionLevel) ||
+      c.exhaustionLevel < 0 ||
+      c.exhaustionLevel > 6
+    )
+      throw Error('Invalid conditions or exhaustion level.');
+
+    c.activeConditions = [...new Set(c.activeConditions)];
     c.skills = [...new Set([...c.skills, ...c.expertise])];
     c.hp = Math.min(c.hp, c.maxHp);
     const schemas = {
@@ -1888,6 +2064,37 @@ document.addEventListener('click', async (e) => {
   const action = btn.dataset.action,
     c = current();
   switch (action) {
+    case 'toggle-conditions': {
+      const picker = $('#condition-picker');
+      picker.hidden = !picker.hidden;
+      btn.setAttribute('aria-expanded', String(!picker.hidden));
+      if (!picker.hidden) {
+        $('#condition-search').value = '';
+        filterConditions('');
+        $('#condition-search').focus();
+      }
+      break;
+    }
+
+    case 'close-conditions':
+      closeConditionsPicker();
+      $('[data-action="toggle-conditions"]')?.focus();
+      break;
+
+    case 'remove-condition': {
+      const name = btn.dataset.conditionReference;
+      if (name === 'Exhaustion') c.exhaustionLevel = 0;
+      else
+        c.activeConditions = (c.activeConditions || []).filter(
+          (condition) => condition !== name,
+        );
+      hideSpellPopup();
+      changed();
+      renderCharacter();
+      $('[data-action="toggle-conditions"]')?.focus();
+      break;
+    }
+
     case 'library':
       state.selected = null;
       shell();
@@ -2285,6 +2492,12 @@ document.addEventListener('click', async (e) => {
 // Closing an editor changes only its presentation; field edits already autosave.
 
 document.addEventListener('click', (event) => {
+  if (
+    !event.target.closest(
+      '#condition-picker, [data-action="toggle-conditions"]',
+    )
+  )
+    closeConditionsPicker();
   let refresh = false;
   if (
     editingAttack &&
@@ -2340,6 +2553,10 @@ document.addEventListener('input', (e) => {
     return;
   }
   if (!c) return;
+  if (el.id === 'condition-search') {
+    filterConditions(el.value);
+    return;
+  }
   if (el.id === 'related-notes-search') {
     const query = el.value.trim().toLocaleLowerCase();
     const notesById = new Map(c.notes.map((note) => [note.id, note]));
@@ -2440,6 +2657,17 @@ document.addEventListener('change', (e) => {
   const el = e.target,
     c = current();
   if (!c) return;
+  if (el.dataset.condition) {
+    const name = el.dataset.condition;
+    if (name === 'Exhaustion' || !Object.hasOwn(conditionRules, name)) return;
+    const active = new Set(c.activeConditions || []);
+    if (el.checked) active.add(name);
+    else active.delete(name);
+    c.activeConditions = [...active];
+    changed();
+    $('#active-conditions').innerHTML = activeConditionChips(c);
+    return;
+  }
   if (pendingBackupEdits.has(el)) {
     pendingBackupEdits.delete(el);
     recordBackupChange();
@@ -2471,6 +2699,9 @@ document.addEventListener('change', (e) => {
     changed();
     scheduleRefresh();
   } else if (el.dataset.field) {
+    if (el.dataset.field === 'exhaustionLevel') {
+      $('#active-conditions').innerHTML = activeConditionChips(c);
+    }
     if (el.dataset.field === 'name' && !c.name.trim())
       c.name = 'Unnamed adventurer';
     if (el.type === 'number') el.value = get(c, el.dataset.field);
