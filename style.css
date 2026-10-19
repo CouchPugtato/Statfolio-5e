@@ -684,6 +684,11 @@ input[type='number'],
   gap: 12px;
   font-size: 12px;
 }
+#skill-search {
+  height: 40px;
+  padding: 9px 11px;
+  line-height: 20px;
+}
 .skill-row:last-child {
   border: 0;
 }

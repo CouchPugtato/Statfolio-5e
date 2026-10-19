@@ -56,6 +56,12 @@ const noteCategories = [
 let noteSearch = '',
   noteFilter = 'all',
   journalCharacterId = null;
+let skillSearch = '';
+let skillCharacterId = null;
+const filteredSkills = () =>
+  Object.entries(skills).filter(([name]) =>
+    name.toLocaleLowerCase().includes(skillSearch.trim().toLocaleLowerCase()),
+  );
 const mod = (n) => Math.floor((Number(n) - 10) / 2);
 const sign = (n) => (n >= 0 ? `+${n}` : String(n));
 let state = { characters: [], selected: null },
@@ -295,6 +301,10 @@ function renderLibrary() {
 }
 function renderCharacter() {
   const c = current();
+  if (skillCharacterId !== c.id) {
+    skillCharacterId = c.id;
+    skillSearch = '';
+  }
   const html = /* HTML */ `<button
       class="back-link text-button"
       data-action="library"
@@ -508,12 +518,15 @@ const views = {
   abilities: (c) =>
     `${panel('Ability scores', abilityTiles(c))}<div class="sheet-grid">${panel(
       'Skills',
-      /* HTML */ `<p class="help"
-          >Check P for proficiency or E for expertise. Bonuses use your level
-          and ability scores.</p
-        ><div class="skill-row skill-head"
+      /* HTML */ `<input
+          id="skill-search"
+          type="search"
+          aria-label="Search skills"
+          placeholder="Search skills…"
+          value="${esc(skillSearch)}"
+        /><div class="skill-row skill-head"
           ><span>SKILL</span><span>P</span><span>E</span><span>BONUS</span></div
-        >${Object.entries(skills)
+        >${filteredSkills()
           .map(
             ([s, a]) =>
               /* HTML */ `<div class="skill-row"
@@ -536,7 +549,9 @@ const views = {
                 ></div
               >`,
           )
-          .join('')}`,
+          .join(
+            '',
+          )}${filteredSkills().length ? '' : '<p class="muted" role="status">No matching skills.</p>'}`,
     )}<div>${panel('Saving throws', abilities.map((a, i) => /* HTML */ `<label class="save-row"><input type="checkbox" data-save="${i}" ${c.saves.includes(i) ? 'checked' : ''} /><span>${a}</span><strong>${sign(mod(c.abilities[i]) + (c.saves.includes(i) ? prof(c) : 0))}</strong></label>`).join(''))}${panel('Other proficiencies & languages', area('Languages, tools, armor & weapons', 'proficiencies', 'Common, Elvish, thieves’ tools…'))}</div></div>`,
   combat: (c) =>
     /* HTML */ `<div class="combat-stats"
@@ -1357,6 +1372,11 @@ document.addEventListener('input', (e) => {
     return;
   }
   if (!c) return;
+  if (el.id === 'skill-search') {
+    skillSearch = el.value;
+    renderCharacter();
+    return;
+  }
   if (el.id === 'journal-search') {
     noteSearch = el.value;
     renderJournalList(c);

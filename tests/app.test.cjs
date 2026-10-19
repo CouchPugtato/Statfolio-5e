@@ -60,6 +60,21 @@ test('expertise implies proficiency, bonuses update, and removing proficiency cl
  }finally{a.close();}
 });
 
+test('skill search filters by name and preserves proficiency and expertise selections',async()=>{
+ const a=await app();try{const c=a.api.blank('Skill search');c.skills=['Arcana'];a.api.use(c);a.api.setPage('abilities');
+ assert.ok(!a.$('#page-content').textContent.includes('Check P for proficiency'));
+ assert.equal(a.w.document.querySelectorAll('[data-skill]').length,18);
+ const search=a.$('#skill-search');search.focus();a.input('#skill-search','sTeAl',false);
+ assert.equal(a.w.document.activeElement,search);assert.equal(a.w.document.querySelectorAll('[data-skill]').length,1);
+ assert.equal(a.$('[data-skill]').dataset.skill,'Stealth');
+ a.input('[data-expertise="Stealth"]',true);await settle();
+ assert.equal(a.$('#skill-search').value,'sTeAl');assert.ok(c.skills.includes('Stealth'));assert.ok(c.skills.includes('Arcana'));
+ a.input('#skill-search','no matching name');assert.equal(a.$('[data-skill]'),null);assert.match(a.$('#page-content').textContent,/No matching skills/);
+ a.input('#skill-search','');assert.equal(a.w.document.querySelectorAll('[data-skill]').length,18);
+ assert.equal(a.$('[data-expertise="Stealth"]').checked,true);assert.equal(a.$('[data-skill="Arcana"]').checked,true);
+ }finally{a.close();}
+});
+
 test('text damage/heal controls work on both pages, absorb temporary HP, cap healing, and validate amounts', async()=>{
  const a=await app();try{const c=a.api.blank('Defender');c.hp=20;c.maxHp=30;c.tempHp=5;c.usedSlots[0]=2;a.api.use(c);a.api.setPage('combat');
  assert.equal(a.$('#hp-amount').type,'text');assert.equal(a.$('[data-field="hp"]'),null);
