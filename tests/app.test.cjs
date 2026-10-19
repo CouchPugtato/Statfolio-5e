@@ -88,6 +88,44 @@ test('notes stay with their character, escape markup, and export all images', as
  }finally{a.close();}
 });
 
+test('journal search combines with category filters without deleting or switching the open note',async()=>{
+ const a=await app();try{
+ const c=a.api.blank('Journal search');
+ c.notes=[
+  {id:randomUUID(),title:'Arrival',body:'An elven guide led us to town.',tag:'Session',updated:'2026-10-19T12:00:00.000Z',images:[]},
+  {id:randomUUID(),title:'Elven ruins',body:'Find the lost key.',tag:'Quest',updated:'2026-10-18T12:00:00.000Z',images:[]},
+  {id:randomUUID(),title:'Mira',body:'The local blacksmith.',tag:'NPC',updated:'2026-10-17T12:00:00.000Z',images:[]}
+ ];
+ a.api.use(c);a.api.setPage('notes');
+ assert.equal(a.w.document.querySelectorAll('.note-preview').length,3);
+ assert.ok(a.$('.note-preview-heading time'));
+ const search=a.$('#journal-search');search.focus();a.input('#journal-search','ELVEN',false);
+ assert.equal(a.w.document.activeElement,search,'Searching keeps the input focused');
+ assert.equal(a.w.document.querySelectorAll('.note-preview').length,2);
+ a.input('#journal-filter','Quest');assert.equal(a.w.document.querySelectorAll('.note-preview').length,1);
+ assert.equal(a.$('.note-preview-heading strong').textContent,'Elven ruins');
+ a.click('.note-preview');assert.equal(a.$('[data-note="title"]').value,'Elven ruins');
+ a.input('#journal-search','no matches');assert.equal(a.$('.note-preview'),null);
+ assert.equal(a.$('[data-note="title"]').value,'Elven ruins');assert.equal(c.notes.length,3);
+ a.click('[data-action="clear-note-filters"]');assert.equal(a.w.document.querySelectorAll('.note-preview').length,3);
+ assert.equal(a.$('#journal-filter').value,'all');assert.equal(a.$('#journal-search').value,'');
+ a.input('#journal-filter','NPC');a.click('[data-action="new-note"]');
+ assert.equal(c.notes[0].tag,'NPC');assert.equal(a.$('#journal-filter').value,'NPC');
+ assert.equal(a.w.document.querySelectorAll('.note-preview').length,2);
+ }finally{a.close();}
+});
+
+test('journal searches stay within the current character and reset when switching characters',async()=>{
+ const a=await app();try{const first=a.api.blank('First');first.notes=[{id:randomUUID(),title:'Old quest',body:'Old text',tag:'Quest',updated:new Date().toISOString(),images:[]}];
+ a.api.use(first);a.api.setPage('notes');a.input('#journal-search','old');a.input('#journal-filter','Quest');
+ const second=a.api.blank('Second');second.notes=[{id:randomUUID(),title:'New session',body:'A separate story',tag:'Session',updated:new Date().toISOString(),images:[]}];a.api.use(second);
+ assert.equal(a.$('#journal-search').value,'');assert.equal(a.$('#journal-filter').value,'all');
+ assert.equal(a.w.document.querySelectorAll('.note-preview').length,1);assert.equal(a.$('.note-preview-heading strong').textContent,'New session');
+ assert.equal(a.$('[data-note="title"]').value,'New session');
+ a.input('#journal-search','old');assert.equal(a.$('.note-preview'),null);assert.equal(first.notes.length,1);
+ }finally{a.close();}
+});
+
 test('restore merges as independent copies, then replacement persists exactly the backup', async()=>{
  const a=await app();try{const c=a.api.blank('Original');c.image=image;c.notes=[{id:randomUUID(),title:'Session',body:'Hello',tag:'Session',updated:new Date().toISOString(),images:[image]}];a.api.use(c);
  await a.restore([c]);assert.equal(a.api.state.characters.length,2);const copy=a.api.state.characters[1];assert.notEqual(copy.id,c.id);assert.notEqual(copy.notes[0].id,c.notes[0].id);assert.equal(copy.notes[0].images[0],image);
