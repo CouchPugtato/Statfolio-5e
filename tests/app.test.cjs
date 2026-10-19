@@ -133,7 +133,11 @@ test('duplicate character copies all data with independent identities and persis
     original.coins.gp = 20;
     a.api.use(original);
 
-    a.click('.character-actions [data-action="duplicate"]');
+    assert.equal(a.$('.character-actions [data-action="duplicate"]'), null);
+    a.click('[data-action="library"]');
+    a.click(
+      `.character-card [data-action="duplicate"][data-id="${original.id}"]`,
+    );
     const copy = a.api.current;
     assert.notEqual(copy.id, original.id);
     assert.equal(copy.name, 'Elowen (copy)');
@@ -173,9 +177,12 @@ test('duplicate character copies all data with independent identities and persis
           .notes[0].body,
         'A clue',
       );
-      b.click('[data-action="menu"]');
-      b.click('#modal [data-action="duplicate"]');
+      b.click('[data-action="library"]');
+      b.click(
+        `.character-card [data-action="duplicate"][data-id="${original.id}"]`,
+      );
       assert.equal(b.api.state.characters.length, 3);
+      assert.equal(b.api.current.notes[0].body, 'A clue');
       assert.equal(b.$('#modal').open, false);
     } finally {
       b.close();

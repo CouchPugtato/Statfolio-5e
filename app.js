@@ -343,7 +343,9 @@ function renderLibrary() {
                   ><span
                     >Updated
                     ${new Date(c.updated).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span
-                  >${button('open', 'Open folio ↗', 'text-button', `data-id="${c.id}"`)}</div
+                  ><div class="card-actions"
+                    >${button('duplicate', 'Duplicate', 'text-button', `data-id="${c.id}" aria-label="Duplicate ${esc(c.name)}"`)}${button('open', 'Open folio ↗', 'text-button', `data-id="${c.id}"`)}</div
+                  ></div
                 ></div
               ></article
             >`,
@@ -380,7 +382,7 @@ function renderCharacter() {
           >${esc([c.species, c.class, c.subclass].filter(Boolean).join(' · ') || 'An unwritten story. Make it yours.')}</p
         ></div
       ><div class="character-actions"
-        >${button('rename', 'Edit identity', 'secondary')}${button('duplicate', 'Duplicate', 'secondary', 'aria-label="Duplicate character"')}${button('menu', '•••', 'secondary', 'aria-label="Character options"')}</div
+        >${button('rename', 'Edit identity', 'secondary')}${button('menu', '•••', 'secondary', 'aria-label="Character options"')}</div
       ></section
     ><div class="section-tabs"
       >${pages.map(([id, label]) => /* HTML */ `<button data-page="${id}" class="${page === id ? 'selected' : ''}">${label}</button>`).join('')}</div
@@ -1751,7 +1753,7 @@ document.addEventListener('click', async (e) => {
       modal(
         'Character options',
         /* HTML */ `<div class="option-buttons"
-          >${button('duplicate', 'Duplicate character', 'secondary')}${button('remove-portrait', 'Remove portrait', 'secondary')}${button('delete-character', 'Delete character', 'secondary danger')}</div
+          >${button('remove-portrait', 'Remove portrait', 'secondary')}${button('delete-character', 'Delete character', 'secondary danger')}</div
         >`,
         () => {},
         'Done',
@@ -1759,7 +1761,12 @@ document.addEventListener('click', async (e) => {
       break;
 
     case 'duplicate': {
-      const copy = structuredClone(c);
+      const source = state.characters.find(
+        (character) => character.id === btn.dataset.id,
+      );
+      if (!source) break;
+
+      const copy = structuredClone(source);
       copy.id = uid();
       copy.name += ' (copy)';
       copy.notes.forEach((n) => (n.id = uid()));

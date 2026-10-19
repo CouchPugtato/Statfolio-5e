@@ -411,6 +411,13 @@ main {
   font-size: 10px;
 }
 
+.card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px 14px;
+}
+
 .character-heading {
   display: flex;
   align-items: center;
