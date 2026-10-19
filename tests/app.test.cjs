@@ -75,6 +75,92 @@ test('skill search filters by name and preserves proficiency and expertise selec
  }finally{a.close();}
 });
 
+test('attacks collapse into readable summaries on Done or outside clicks without losing edits or the clicked action',async()=>{
+ const a=await app();try{const c=a.api.blank('Attack editor');a.api.use(c);a.api.setPage('combat');
+ a.click('[data-action="add-attack"]');assert.ok(a.$('[data-attack-editor]'));
+ a.input('[data-field="attacks.0.name"]','Longsword');a.input('[data-field="attacks.0.bonus"]','+5');
+ a.input('[data-field="attacks.0.damage"]','1d8 + 3');a.input('[data-field="attacks.0.type"]','Slashing · 5 ft');
+ a.input('[data-field="attacks.0.notes"]','Versatile <img src=x>');
+ a.click('[data-action="finish-attack"]');assert.equal(a.$('[data-attack-editor]'),null);
+ assert.match(a.$('.attack-summary').textContent,/Longsword/);assert.match(a.$('.attack-summary').textContent,/1d8 \+ 3/);
+ assert.match(a.$('.attack-summary').textContent,/Versatile <img src=x>/);assert.equal(a.$('.attack-summary img'),null);
+ a.click('.attack-summary');assert.equal(a.$('[data-field="attacks.0.name"]').value,'Longsword');
+ a.input('[data-field="attacks.0.bonus"]','+6');a.click('.combat-stats');
+ assert.equal(a.$('[data-attack-editor]'),null);assert.match(a.$('.attack-summary').textContent,/\+6/);
+ a.click('.attack-summary');a.input('[data-field="attacks.0.notes"]','Updated notes');
+ a.$('#hp-amount').value='1';a.click('[data-action="damage"]');
+ assert.equal(c.hp,9,'The outside click must still apply damage');assert.equal(a.$('[data-attack-editor]'),null);
+ assert.match(a.$('.attack-summary').textContent,/Updated notes/);
+ }finally{a.close();}
+});
+
+test('only one attack is edited at a time and saved attacks reopen in compact mode',async()=>{
+ const a=await app();try{const c=a.api.blank('Several attacks');a.api.use(c);a.api.setPage('combat');
+ a.click('[data-action="add-attack"]');a.input('[data-field="attacks.0.name"]','Bow');
+ a.click('[data-action="add-attack"]');a.input('[data-field="attacks.1.name"]','Dagger');
+ assert.equal(a.w.document.querySelectorAll('[data-attack-editor]').length,1);assert.match(a.$('.attack-summary').textContent,/Bow/);
+ a.click('.attack-summary');assert.equal(a.$('[data-attack-editor]').dataset.attackEditor,'0');
+ assert.match(a.$('.attack-summary').textContent,/Dagger/);a.click('[data-action="finish-attack"]');
+ await a.api.persist();const b=await app(a.storage);try{b.api.setPage('combat');assert.equal(b.$('[data-attack-editor]'),null);assert.equal(b.w.document.querySelectorAll('.attack-summary').length,2);
+ b.click('.attack-summary');b.click('[data-action="remove"][data-list="attacks"]');
+ assert.equal(b.api.current.attacks.length,1);assert.equal(b.api.current.attacks[0].name,'Dagger');assert.equal(b.$('[data-attack-editor]'),null);
+ }finally{b.close();}
+ }finally{a.close();}
+});
+
+test('spells collapse on Done or outside clicks and retain descriptions, details, and prepared state',async()=>{
+ const a=await app();try{const c=a.api.blank('Spell editor');a.api.use(c);a.api.setPage('spells');
+ a.click('[data-action="add-spell"]');assert.ok(a.$('[data-spell-editor]'));
+ const values={name:'Test ward',level:1,school:'Abjuration',time:'1 action',range:'Touch',components:'V, S',duration:'1 hour',description:'A protective ward. <img src=x>',prepared:true};
+ for(const [key,value] of Object.entries(values))a.input(`[data-field="spells.0.${key}"]`,value);
+ a.click('[data-action="finish-spell"]');assert.equal(a.$('[data-spell-editor]'),null);
+ const summary=a.$('.spell-record-summary');assert.match(summary.textContent,/Test ward/);assert.match(summary.textContent,/Level 1 · Abjuration · Prepared/);assert.match(summary.textContent,/1 hour/);assert.match(summary.textContent,/<img src=x>/);assert.equal(summary.querySelector('img'),null);
+ a.click('.spell-record-summary');assert.equal(a.$('[data-field="spells.0.prepared"]').checked,true);assert.equal(a.$('[data-field="spells.0.description"]').value,values.description);
+ a.input('[data-field="spells.0.range"]','60 ft');a.click('.spell-summary');
+ assert.equal(a.$('[data-spell-editor]'),null);assert.match(a.$('.spell-record-summary').textContent,/60 ft/);
+ a.click('.spell-record-summary');a.input('[data-field="spells.0.prepared"]',false);a.click('[data-field="slots.0"]');a.input('[data-field="slots.0"]',3);
+ assert.equal(a.$('[data-spell-editor]'),null);assert.equal(c.slots[0],3);assert.ok(!a.$('.spell-record-meta').textContent.includes('Prepared'));
+ }finally{a.close();}
+});
+
+test('spell editors switch between entries and saved spells reload compactly',async()=>{
+ const a=await app();try{const c=a.api.blank('Spellbook');a.api.use(c);a.api.setPage('spells');
+ a.click('[data-action="add-spell"]');a.input('[data-field="spells.0.name"]','First spell');
+ a.click('[data-action="add-spell"]');a.input('[data-field="spells.1.name"]','Second spell');
+ assert.equal(a.w.document.querySelectorAll('[data-spell-editor]').length,1);assert.match(a.$('.spell-record-summary').textContent,/First spell/);
+ a.click('.spell-record-summary');assert.equal(a.$('[data-spell-editor]').dataset.spellEditor,'0');assert.match(a.$('.spell-record-summary').textContent,/Second spell/);
+ a.click('[data-action="finish-spell"]');await a.api.persist();const b=await app(a.storage);
+ try{b.api.setPage('spells');assert.equal(b.$('[data-spell-editor]'),null);assert.equal(b.w.document.querySelectorAll('.spell-record-summary').length,2);
+ b.click('.spell-record-summary');b.click('[data-action="remove"][data-list="spells"]');assert.equal(b.api.current.spells.length,1);assert.equal(b.api.current.spells[0].name,'Second spell');assert.equal(b.$('[data-spell-editor]'),null);
+ }finally{b.close();}
+ }finally{a.close();}
+});
+
+test('spell hover popups show the full escaped description and close immediately when leaving the card',async()=>{
+ const a=await app();try{const c=a.api.blank('Hover spells');
+ const description=('A long description with several lines.\n').repeat(30)+'<img src=x onerror=bad()>';
+ c.spells=[{name:'Detailed spell',level:1,school:'',time:'',range:'',components:'',duration:'',description,prepared:false}];a.api.use(c);a.api.setPage('spells');
+ const card=a.$('.spell-record-summary');card.dispatchEvent(new a.w.MouseEvent('pointerover',{bubbles:true}));
+ const popup=a.$('.spell-popup');assert.ok(popup);assert.equal(popup.hidden,false);assert.equal(a.$('.spell-popup-description').textContent,description);
+ assert.equal(a.$('.spell-popup-title').textContent,'Detailed spell');assert.equal(popup.querySelector('img'),null);assert.equal(card.getAttribute('aria-describedby'),popup.id);
+ card.dispatchEvent(new a.w.MouseEvent('pointerout',{bubbles:true,relatedTarget:card.firstElementChild}));assert.equal(popup.hidden,false);
+ card.dispatchEvent(new a.w.MouseEvent('pointerout',{bubbles:true,relatedTarget:popup}));assert.equal(popup.hidden,true);
+ popup.dispatchEvent(new a.w.MouseEvent('pointerover',{bubbles:true,relatedTarget:card}));assert.equal(popup.hidden,true);
+ card.focus();assert.equal(popup.hidden,false);
+ card.dispatchEvent(new a.w.MouseEvent('pointerout',{bubbles:true,relatedTarget:a.w.document.body}));
+ assert.equal(popup.hidden,true);assert.equal(card.hasAttribute('aria-describedby'),false);
+ }finally{a.close();}
+});
+
+test('spell popups support keyboard focus and Escape and dismiss when editing begins',async()=>{
+ const a=await app();try{const c=a.api.blank('Keyboard spells');c.spells=[{name:'Focused spell',level:0,school:'',time:'',range:'',components:'',duration:'',description:'Full effect text.',prepared:false}];a.api.use(c);a.api.setPage('spells');
+ const card=a.$('.spell-record-summary');card.focus();const popup=a.$('.spell-popup');assert.equal(popup.hidden,false);
+ popup.focus();assert.equal(popup.hidden,false);a.$('[data-field="spellAbility"]').focus();assert.equal(popup.hidden,true);
+ card.focus();assert.equal(popup.hidden,false);card.dispatchEvent(new a.w.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));assert.equal(popup.hidden,true);
+ card.blur();card.focus();assert.equal(popup.hidden,false);a.click('.spell-record-summary');assert.equal(popup.hidden,true);assert.ok(a.$('[data-spell-editor]'));
+ }finally{a.close();}
+});
+
 test('text damage/heal controls work on both pages, absorb temporary HP, cap healing, and validate amounts', async()=>{
  const a=await app();try{const c=a.api.blank('Defender');c.hp=20;c.maxHp=30;c.tempHp=5;c.usedSlots[0]=2;a.api.use(c);a.api.setPage('combat');
  assert.equal(a.$('#hp-amount').type,'text');assert.equal(a.$('[data-field="hp"]'),null);

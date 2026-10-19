@@ -56,6 +56,10 @@ const noteCategories = [
 let noteSearch = '',
   noteFilter = 'all',
   journalCharacterId = null;
+let editingAttack = null;
+let editingSpell = null;
+let spellPopup = null;
+let spellPopupCard = null;
 let skillSearch = '';
 let skillCharacterId = null;
 const filteredSkills = () =>
@@ -219,6 +223,7 @@ const button = (action, label, cls = '', data = '') =>
     >${label}</button
   >`;
 function shell() {
+  hideSpellPopup();
   const c = current();
   $('#app').innerHTML = /* HTML */ `<div class="workspace"
     ><main id="main"></main
@@ -300,10 +305,13 @@ function renderLibrary() {
     >${!characters.length ? empty(state.characters.length ? 'No matching characters' : 'No characters yet', state.characters.length ? 'Try a different search.' : 'Create a character to start your sheet and journal.') : ''}`;
 }
 function renderCharacter() {
+  hideSpellPopup();
   const c = current();
   if (skillCharacterId !== c.id) {
     skillCharacterId = c.id;
     skillSearch = '';
+    editingAttack = null;
+    editingSpell = null;
   }
   const html = /* HTML */ `<button
       class="back-link text-button"
@@ -482,6 +490,238 @@ function spellSlots(c) {
     '<span class="muted">Used slots reset on a long rest.</span>',
   );
 }
+function attackRecords(c) {
+  if (!c.attacks.length)
+    return '<p class="muted">Add your weapons, attacks, and special actions.</p>';
+  return /* HTML */ `<div class="record-list"
+    >${c.attacks
+      .map((attack, index) => {
+        if (editingAttack === attack) {
+          return /* HTML */ `<div
+            class="record attack-editor"
+            data-attack-editor="${index}"
+          >
+            <div class="record-top">
+              ${field('Attack / action', `attacks.${index}.name`)}
+              ${button('remove', '×', 'icon-button', `data-list="attacks" data-index="${index}" aria-label="Remove attack"`)}
+            </div>
+            <div class="form-grid three">
+              ${field('Attack bonus', `attacks.${index}.bonus`)}
+              ${field('Damage', `attacks.${index}.damage`)}
+              ${field('Type / range', `attacks.${index}.type`)}
+            </div>
+            ${area('Notes', `attacks.${index}.notes`)}
+            <div class="attack-editor-actions"
+              >${button('finish-attack', 'Done', 'secondary')}</div
+            >
+          </div>`;
+        }
+        const details = [
+          ['Attack', attack.bonus],
+          ['Damage', attack.damage],
+          ['Type / range', attack.type],
+        ]
+          .filter(([, value]) => value.trim())
+          .map(
+            ([label, value]) =>
+              /* HTML */ `<span
+                ><small>${label}</small><b>${esc(value)}</b></span
+              >`,
+          )
+          .join('');
+        return /* HTML */ `<button
+          class="attack-summary"
+          data-action="edit-attack"
+          data-index="${index}"
+          aria-label="Edit ${esc(attack.name || 'unnamed attack')}"
+        >
+          <span class="attack-summary-heading"
+            ><strong>${esc(attack.name.trim() || 'Unnamed attack')}</strong
+            ><span class="attack-edit-label">Edit</span></span
+          >
+          ${details ? /* HTML */ `<span class="attack-summary-stats">${details}</span>` : '<span class="muted">Click to add attack details.</span>'}
+          ${attack.notes.trim() ? /* HTML */ `<span class="attack-summary-notes">${esc(attack.notes)}</span>` : ''}
+        </button>`;
+      })
+      .join('')}</div
+  >`;
+}
+function hideSpellPopup() {
+  if (
+    spellPopupCard?.getAttribute('aria-describedby') ===
+    'spell-description-popup'
+  ) {
+    spellPopupCard.removeAttribute('aria-describedby');
+  }
+  spellPopupCard = null;
+  if (spellPopup) spellPopup.hidden = true;
+}
+function showSpellPopup(card) {
+  const spell =
+    page === 'spells' ? current()?.spells[Number(card.dataset.index)] : null;
+  if (!spell?.description.trim()) {
+    hideSpellPopup();
+    return;
+  }
+  if (spellPopupCard === card && !spellPopup.hidden) return;
+  hideSpellPopup();
+  if (!spellPopup) {
+    spellPopup = document.createElement('aside');
+    spellPopup.id = 'spell-description-popup';
+    spellPopup.className = 'spell-popup';
+    spellPopup.setAttribute('role', 'tooltip');
+    spellPopup.tabIndex = 0;
+    const heading = document.createElement('h3');
+    heading.className = 'spell-popup-title';
+    const description = document.createElement('p');
+    description.className = 'spell-popup-description';
+    spellPopup.append(heading, description);
+    document.body.append(spellPopup);
+  }
+  $('.spell-popup-title', spellPopup).textContent =
+    spell.name.trim() || 'Unnamed spell';
+  $('.spell-popup-description', spellPopup).textContent = spell.description;
+  spellPopup.hidden = false;
+  spellPopupCard = card;
+  card.setAttribute('aria-describedby', spellPopup.id);
+  const cardRect = card.getBoundingClientRect();
+  const popupRect = spellPopup.getBoundingClientRect();
+  const width = document.documentElement.clientWidth || window.innerWidth;
+  const height = document.documentElement.clientHeight || window.innerHeight;
+  const margin = 12;
+  const clamp = (value, maximum) => Math.max(margin, Math.min(value, maximum));
+  let left = cardRect.right + margin;
+  let top = cardRect.top;
+  if (left + popupRect.width > width - margin)
+    left = cardRect.left - popupRect.width - margin;
+  if (left < margin) {
+    left = clamp(cardRect.left, width - popupRect.width - margin);
+    top = cardRect.bottom + margin;
+    if (top + popupRect.height > height - margin)
+      top = cardRect.top - popupRect.height - margin;
+  }
+  spellPopup.style.left = `${clamp(left, width - popupRect.width - margin)}px`;
+  spellPopup.style.top = `${clamp(top, height - popupRect.height - margin)}px`;
+}
+document.addEventListener('pointerover', (event) => {
+  if (event.pointerType === 'touch') return;
+  const card = event.target.closest('.spell-record-summary');
+  if (card) showSpellPopup(card);
+});
+document.addEventListener('pointerout', (event) => {
+  if (!spellPopupCard) return;
+  const next = event.relatedTarget;
+  if (next instanceof Node && spellPopupCard.contains(next)) return;
+  if (
+    spellPopupCard.contains(event.target) ||
+    spellPopup.contains(event.target)
+  )
+    hideSpellPopup();
+});
+document.addEventListener('focusin', (event) => {
+  const card = event.target.closest('.spell-record-summary');
+  if (card) showSpellPopup(card);
+  else if (!spellPopup?.contains(event.target)) hideSpellPopup();
+});
+document.addEventListener('focusout', (event) => {
+  const next = event.relatedTarget;
+  if (
+    next instanceof Node &&
+    (spellPopupCard?.contains(next) || spellPopup?.contains(next))
+  )
+    return;
+  hideSpellPopup();
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') hideSpellPopup();
+});
+window.addEventListener('resize', hideSpellPopup);
+document.addEventListener(
+  'scroll',
+  (event) => {
+    if (!spellPopup?.contains(event.target)) hideSpellPopup();
+  },
+  true,
+);
+function spellRecords(c) {
+  if (!c.spells.length)
+    return empty(
+      'An open spellbook',
+      'Add your cantrips and spells, with the details you need at the table.',
+    );
+  return /* HTML */ `<div class="spell-grid"
+    >${c.spells
+      .map((spell, index) => {
+        if (editingSpell === spell) {
+          return /* HTML */ `<div
+            class="record spell-editor"
+            data-spell-editor="${index}"
+          >
+            <div class="record-top">
+              ${field('Spell name', `spells.${index}.name`)}
+              ${button('remove', '×', 'icon-button', `data-list="spells" data-index="${index}" aria-label="Remove spell"`)}
+            </div>
+            <div class="form-grid three">
+              ${field('Level (0 = cantrip)', `spells.${index}.level`, 'number', { max: 9 })}
+              ${field('School', `spells.${index}.school`)}
+              ${field('Casting time', `spells.${index}.time`)}
+              ${field('Range', `spells.${index}.range`)}
+              ${field('Components', `spells.${index}.components`)}
+              ${field('Duration', `spells.${index}.duration`)}
+            </div>
+            <label class="check"
+              ><input
+                type="checkbox"
+                data-field="spells.${index}.prepared"
+                ${spell.prepared ? 'checked' : ''}
+              />
+              Prepared</label
+            >
+            ${area('Effect / description', `spells.${index}.description`)}
+            <div class="attack-editor-actions"
+              >${button('finish-spell', 'Done', 'secondary')}</div
+            >
+          </div>`;
+        }
+        const metadata = [
+          spell.level === 0 ? 'Cantrip' : `Level ${spell.level}`,
+          spell.school.trim(),
+          spell.prepared ? 'Prepared' : '',
+        ]
+          .filter(Boolean)
+          .join(' · ');
+        const details = [
+          ['Casting time', spell.time],
+          ['Range', spell.range],
+          ['Components', spell.components],
+          ['Duration', spell.duration],
+        ]
+          .filter(([, value]) => value.trim())
+          .map(
+            ([label, value]) =>
+              /* HTML */ `<span
+                ><small>${label}</small><b>${esc(value)}</b></span
+              >`,
+          )
+          .join('');
+        return /* HTML */ `<button
+          class="attack-summary spell-record-summary"
+          data-action="edit-spell"
+          data-index="${index}"
+          aria-label="Edit ${esc(spell.name || 'unnamed spell')}"
+        >
+          <span class="attack-summary-heading"
+            ><strong>${esc(spell.name.trim() || 'Unnamed spell')}</strong
+            ><span class="attack-edit-label">Edit</span></span
+          >
+          <span class="spell-record-meta">${esc(metadata)}</span>
+          ${details ? /* HTML */ `<span class="attack-summary-stats">${details}</span>` : ''}
+          ${spell.description.trim() ? /* HTML */ `<span class="attack-summary-notes spell-description">${esc(spell.description)}</span>` : ''}
+        </button>`;
+      })
+      .join('')}</div
+  >`;
+}
 const views = {
   overview: (c) =>
     /* HTML */ `<div class="sheet-grid overview-grid"
@@ -557,7 +797,7 @@ const views = {
     /* HTML */ `<div class="combat-stats"
         >${field('Armor class', 'ac', 'number')}${field('Speed (ft)', 'speed', 'number')}${field('Initiative adjustment', 'initiativeBonus', 'number')}${field('Hit dice', 'hitDice')}${field('Hit dice remaining', 'hitDiceLeft', 'number')}</div
       ><div class="sheet-grid"
-        >${panel('Attacks & actions', /* HTML */ `<div class="record-list">${c.attacks.map((a, i) => /* HTML */ `<div class="record"><div class="record-top">${field('Attack / action', `attacks.${i}.name`)}${button('remove', '×', 'icon-button', `data-list="attacks" data-index="${i}" aria-label="Remove attack"`)}</div><div class="form-grid three">${field('Attack bonus', `attacks.${i}.bonus`)}${field('Damage', `attacks.${i}.damage`)}${field('Type / range', `attacks.${i}.type`)}</div>${area('Notes', `attacks.${i}.notes`)}</div>`).join('') || '<p class="muted">Add your weapons, attacks, and special actions.</p>'}</div>`, button('add-attack', '＋ Add attack', 'text-button'))}<div
+        >${panel('Attacks & actions', attackRecords(c), button('add-attack', '＋ Add attack', 'text-button'))}<div
           >${panel('Health & recovery', `${healthControls(c)}<div class="form-grid">${field('Death save successes', 'deathSuccess', 'number', { max: 3 })}${field('Death save failures', 'deathFailure', 'number', { max: 3 })}</div>${field('Conditions', 'conditions')}${button('rest', 'Take a long rest', 'secondary full')}`)}${panel('Features & resources', area('Class features, feats & traits', 'features', 'Record your actions, traits, and limited-use abilities.') + c.resources.map((r, i) => /* HTML */ `<div class="record"><div class="record-top">${field('Resource', `resources.${i}.name`)}${button('remove', '×', 'icon-button', `data-list="resources" data-index="${i}" aria-label="Remove resource"`)}</div><div class="form-grid">${field('Remaining', `resources.${i}.remaining`, 'number')}${field('Maximum', `resources.${i}.max`, 'number')}</div></div>`).join(''), button('add-resource', '＋ Add', 'text-button'))}</div
         ></div
       >`,
@@ -566,32 +806,7 @@ const views = {
         >${spellSlots(c)}${spellcastingSummary(c)}</div
       >${panel(
         'Your spells',
-        c.spells.length
-          ? /* HTML */ `<div class="spell-grid"
-              >${c.spells
-                .map(
-                  (s, i) =>
-                    /* HTML */ `<div class="record"
-                      ><div class="record-top"
-                        >${field('Spell name', `spells.${i}.name`)}${button('remove', '×', 'icon-button', `data-list="spells" data-index="${i}" aria-label="Remove spell"`)}</div
-                      ><div class="form-grid three"
-                        >${field('Level (0 = cantrip)', `spells.${i}.level`, 'number', { max: 9 })}${field('School', `spells.${i}.school`)}${field('Casting time', `spells.${i}.time`)}${field('Range', `spells.${i}.range`)}${field('Components', `spells.${i}.components`)}${field('Duration', `spells.${i}.duration`)}</div
-                      ><label class="check"
-                        ><input
-                          type="checkbox"
-                          data-field="spells.${i}.prepared"
-                          ${s.prepared ? 'checked' : ''}
-                        />
-                        Prepared</label
-                      >${area('Effect / description', `spells.${i}.description`)}</div
-                    >`,
-                )
-                .join('')}</div
-            >`
-          : empty(
-              'An open spellbook',
-              'Add your cantrips and spells, with the details you need at the table.',
-            ),
+        spellRecords(c),
         button('add-spell', '＋ Add spell', 'secondary'),
       )}${panel('Spellcasting notes', area('Rituals, pact magic & other details', 'spellNotes'))}`,
   equipment: (c) =>
@@ -1193,7 +1408,18 @@ document.addEventListener('click', async (e) => {
       break;
     case 'add-attack':
       c.attacks.push({ name: '', bonus: '', damage: '', type: '', notes: '' });
+      editingAttack = c.attacks.at(-1);
       changed();
+      renderCharacter();
+      $('[data-attack-editor] input')?.focus();
+      break;
+    case 'edit-attack':
+      editingAttack = c.attacks[Number(btn.dataset.index)];
+      renderCharacter();
+      $('[data-attack-editor] input')?.focus();
+      break;
+    case 'finish-attack':
+      editingAttack = null;
       renderCharacter();
       break;
     case 'add-resource':
@@ -1213,7 +1439,18 @@ document.addEventListener('click', async (e) => {
         description: '',
         prepared: false,
       });
+      editingSpell = c.spells.at(-1);
       changed();
+      renderCharacter();
+      $('[data-spell-editor] input')?.focus();
+      break;
+    case 'edit-spell':
+      editingSpell = c.spells[Number(btn.dataset.index)];
+      renderCharacter();
+      $('[data-spell-editor] input')?.focus();
+      break;
+    case 'finish-spell':
+      editingSpell = null;
       renderCharacter();
       break;
     case 'add-item':
@@ -1228,6 +1465,8 @@ document.addEventListener('click', async (e) => {
       renderCharacter();
       break;
     case 'remove':
+      if (btn.dataset.list === 'attacks') editingAttack = null;
+      if (btn.dataset.list === 'spells') editingSpell = null;
       c[btn.dataset.list].splice(Number(btn.dataset.index), 1);
       changed();
       renderCharacter();
@@ -1340,6 +1579,29 @@ document.addEventListener('click', async (e) => {
       renderCharacter();
       break;
   }
+});
+// Closing an editor changes only its presentation; field edits already autosave.
+document.addEventListener('click', (event) => {
+  let refresh = false;
+  if (
+    editingAttack &&
+    !event.target.closest(
+      '[data-attack-editor], [data-action="edit-attack"], [data-action="add-attack"]',
+    )
+  ) {
+    editingAttack = null;
+    refresh = page === 'combat';
+  }
+  if (
+    editingSpell &&
+    !event.target.closest(
+      '[data-spell-editor], [data-action="edit-spell"], [data-action="add-spell"]',
+    )
+  ) {
+    editingSpell = null;
+    refresh = refresh || page === 'spells';
+  }
+  if (current() && refresh) renderCharacter();
 });
 function refreshesValues(path) {
   return (
