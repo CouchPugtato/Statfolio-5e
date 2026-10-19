@@ -81,7 +81,7 @@ main{padding:43px 44px 48px;max-width:1600px;width:100%;margin:0 auto;flex:1}
 .panel-heading .muted{font-size:9px}
 .form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
 .form-grid.three{grid-template-columns:repeat(3,minmax(0,1fr))}
-.field{display:flex;flex-direction:column;gap:7px;margin-bottom:16px;min-width:0}
+.field{display:flex;flex-direction:column;gap:7px;margin-bottom:12px;min-width:0}
 .form-grid .field{margin-bottom:0}
 .field>span{font-size:9px;font-weight:600;letter-spacing:.7px;color:#a8b6ca;text-transform:uppercase}
 .field.wide{grid-column:1/-1}
@@ -89,7 +89,7 @@ main{padding:43px 44px 48px;max-width:1600px;width:100%;margin:0 auto;flex:1}
 input:not([type=checkbox]),textarea,select{color:var(--ink);border:1px solid #354357;border-radius:4px;background:#202b3a;padding:10px 11px;width:100%;min-width:0;outline:none;font-size:12px}
 input:focus,textarea:focus,select:focus{border-color:#354357;box-shadow:0 0 0 2px #2563a609}
 input[type=checkbox]{accent-color:var(--accent);width:15px;height:15px;cursor:pointer;flex-shrink:0}
-textarea{resize:vertical;min-height:94px;line-height:1.7}
+textarea{resize:none;min-height:56px;overflow-y:hidden;line-height:1.7}
 input[type=number],.card-stats strong,.ability-tile>strong,.glance strong,.hp-display strong,.skill-row strong,.save-row strong,.big-number{font-variant-numeric:tabular-nums}
 .ability-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px}
 .ability-tile{text-align:center;background:#202b3a;border:1px solid var(--line);padding:14px 5px 10px;border-radius:5px}
@@ -98,7 +98,7 @@ input[type=number],.card-stats strong,.ability-tile>strong,.glance strong,.hp-di
 .ability-tile input{width:43px!important;text-align:center;padding:5px!important;font-size:11px!important;background:var(--panel)!important;-moz-appearance:textfield}
 .ability-tile input::-webkit-inner-spin-button{-webkit-appearance:none}
 .glance{display:grid;grid-template-columns:1fr 1fr;gap:0}
-.glance>div{padding:9px 0 17px;display:flex;flex-direction:column;gap:8px}
+.glance>div{padding:8px 0;display:flex;align-items:center;justify-content:space-between;gap:10px}
 .glance span{font-size:10px;color:#a8b6ca}
 .glance strong{font:600 29px var(--sans);color:#9ac5ff}
 .check{display:flex;align-items:center;gap:9px;font-size:11px}
@@ -126,12 +126,12 @@ input[type=number],.card-stats strong,.ability-tile>strong,.glance strong,.hp-di
 .record-top{display:flex;gap:12px;align-items:start}
 .record-top>.field{flex:1}
 .record .form-grid{margin-bottom:14px}
-.record textarea{min-height:65px}
+.record textarea{min-height:56px}
 .icon-button{font-size:23px;padding:0 5px;line-height:28px;color:#a8b6ca}
 .danger{color:var(--accent)}
-.health-actions{display:flex;gap:8px;margin:0 0 18px}
+.health-actions{display:flex;align-items:center;gap:8px;margin:0 0 14px}
 .health-actions>input{flex:1;width:100%;min-width:0}
-.hp-amount-label{margin-bottom:8px}
+.hp-amount-label{margin:0;flex-shrink:0}
 .hp-limits{margin-bottom:20px}
 .spell-summary{display:grid;grid-template-columns:2fr 1fr 1fr;gap:22px}
 .big-number{font:600 42px var(--sans);color:#9ac5ff}
@@ -358,5 +358,105 @@ h2,.panel-heading h2{font-size:18px}
  .storage-info{gap:12px}
  .backup-actions{gap:20px}
  .ability-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+}
+
+/* Short fields pair each label with its control on the same row. */
+.field:has(>input),.field:has(>select){display:grid;grid-template-columns:min(40%,8rem) minmax(0,1fr);align-items:center;gap:10px}
+.field>span,.inventory-row .field>span{line-height:1.35;letter-spacing:0;text-transform:none;overflow-wrap:anywhere}
+.form-grid{gap:10px 18px}
+.record .form-grid{margin-bottom:12px}
+.record-top{align-items:center}
+.record-top>.field{margin-bottom:12px}
+.glance{column-gap:24px}
+.glance strong{flex-shrink:0}
+.hp-limits{gap:10px 16px;margin-bottom:14px}
+.health-actions>.hp-amount-label{margin:0}
+.health-actions>input{width:0}
+.combat-stats{gap:12px 18px}
+.coins{gap:12px 20px}
+.coins .field{grid-template-columns:auto minmax(0,1fr);gap:10px}
+.inventory-row{align-items:center}
+.inventory-row>.field{grid-template-columns:min(40%,6.5rem) minmax(0,1fr);gap:8px}
+.inventory-row>.check,.inventory-row>.icon-button{align-self:center}
+.slots label{display:flex;align-items:center;gap:6px}
+.slots input{flex:1;width:0;margin-top:0;text-align:center}
+.note-editor>.field:has(>input),.note-editor>.field:has(>select){grid-template-columns:5rem minmax(0,1fr)}
+dialog .form-grid{grid-template-columns:1fr}
+@media(max-width:1100px){
+ .inventory-row{grid-template-columns:24px minmax(0,2fr) minmax(0,1fr) minmax(0,1fr) 24px}
+ .inventory-row>.field:nth-last-child(2){grid-column:2/5}
+ .inventory-row>.icon-button{grid-column:5;grid-row:1}
+}
+@media(max-width:700px){
+ .form-grid,.form-grid.three{grid-template-columns:1fr;gap:10px}
+ .hp-limits{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+ .combat-stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .coins{grid-template-columns:repeat(3,minmax(0,1fr))}
+ .health-actions{gap:7px}
+ .health-actions .secondary{padding:10px}
+}
+@media(max-width:480px){
+ .combat-stats{grid-template-columns:1fr;gap:10px}
+ .hp-limits{grid-template-columns:1fr;gap:10px}
+ .inventory-row{grid-template-columns:24px minmax(0,1fr) minmax(0,1fr) 24px;gap:10px}
+ .inventory-row>.field:nth-child(2){grid-column:2/4;grid-row:1}
+ .inventory-row>.field:nth-child(3){grid-column:2;grid-row:2;grid-template-columns:min(50%,6.5rem) minmax(0,1fr)}
+ .inventory-row>.field:nth-child(4){grid-column:3;grid-row:2;grid-template-columns:min(50%,6.5rem) minmax(0,1fr)}
+ .inventory-row>.field:nth-last-child(2){grid-column:2/4;grid-row:3}
+ .inventory-row>.check{grid-column:1;grid-row:1}
+ .inventory-row>.icon-button{grid-column:4;grid-row:1}
+}
+.background-grid{grid-template-columns:minmax(0,1fr) minmax(0,1.6fr)}
+@media(max-width:950px){
+ .background-grid{grid-template-columns:1fr}
+}
+
+/* Containers own vertical spacing, so neighboring fields never double a gap. */
+:root{--field-gap:12px;--section-gap:20px;--label-gap:6px}
+.field{margin-block:0;row-gap:var(--label-gap)}
+.form-grid,.combat-stats,.coins{row-gap:var(--field-gap);align-items:stretch}
+.field:has(>input),.field:has(>select){row-gap:var(--label-gap)}
+.sheet-grid,.spell-summary,.journal,.spell-grid{gap:var(--section-gap);align-items:start}
+.panel{margin-bottom:var(--section-gap)}
+.panel:last-child{margin-bottom:0}
+.panel-heading{margin-bottom:16px}
+.panel-body,.record,.record-list,.note-editor{display:flex;flex-direction:column;gap:var(--field-gap)}
+.panel-body>*{margin-block:0}
+.panel-body>.field,.panel-body>.form-grid,.panel-body>.health-actions,.panel-body>.hp-track,.panel-body>.hp-limits,.panel-body>.full{margin-block:0}
+.field:has(>input[data-field="conditions"]){margin-block-start:var(--field-gap)}
+.record{margin-block:0;padding:16px}
+.record-top>.field,.record .form-grid,.spell-grid .check{margin-block:0}
+.record-top{align-items:center}
+.panel-body>.record-list{gap:var(--field-gap)}
+.spell-summary{margin-bottom:var(--section-gap)}
+.spell-summary>.panel,.journal>.panel{margin-bottom:0}
+.combat-stats{margin-bottom:var(--section-gap)}
+.slots label{margin-top:var(--field-gap)}
+.slots input{margin-top:0}
+.inventory-row{row-gap:var(--field-gap);padding-block:16px}
+.inventory-row:last-of-type{margin-bottom:0}
+.inspiration{padding-top:var(--field-gap)}
+.note-editor>.panel-heading,.note-editor>.field,.note-editor>.note-attachments{margin-block:0}
+.note-attachments{gap:var(--field-gap)}
+.note-attachments:empty{display:none}
+.note-list>.panel-heading{margin-bottom:var(--field-gap)}
+.note-list>.help{margin-bottom:16px}
+#modal-form{display:flex;flex-direction:column;gap:16px}
+#modal-form>.modal-head,#modal-form>p,#modal-form>.field,#modal-form>.form-grid{margin-block:0}
+.modal-actions{margin-top:4px}
+.option-buttons{gap:var(--field-gap)}
+
+/* Equal-height field rows keep controls aligned even when a label wraps. */
+.form-grid>.field,.combat-stats>.field,.coins>.field{align-self:stretch}
+.field>input:not([type=checkbox]),.field>select,.health-actions>input{min-height:40px;line-height:20px}
+.overview-grid{align-items:stretch}
+.overview-grid>div{display:contents}
+.overview-grid>div>.panel{margin-bottom:0}
+@media(min-width:951px){
+.overview-grid>div:first-child>.panel:first-child{grid-column:1;grid-row:1}
+.overview-grid>div:first-child>.panel:nth-child(2){grid-column:1;grid-row:2/4}
+.overview-grid>div:nth-child(2)>.panel:first-child{grid-column:2;grid-row:1}
+.overview-grid>div:nth-child(2)>.panel:nth-child(2){grid-column:2;grid-row:2}
+.overview-grid>div:nth-child(2)>.panel:nth-child(3){grid-column:2;grid-row:3}
 }
 
