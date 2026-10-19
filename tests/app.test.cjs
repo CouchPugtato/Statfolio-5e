@@ -60,6 +60,39 @@ test('expertise implies proficiency, bonuses update, and removing proficiency cl
  }finally{a.close();}
 });
 
+test('currency spending breaks larger coins, combines smaller coins, and saves gains',async()=>{
+ const a=await app();try{const c=a.api.blank('Treasurer');c.coins={cp:0,sp:2,ep:0,gp:2,pp:0};a.api.use(c);a.api.setPage('equipment');
+ a.input('#currency-unit','sp');a.input('#currency-amount','5');a.click('[data-action="spend"]');
+ assert.deepEqual({...c.coins},{cp:0,sp:2,ep:1,gp:1,pp:0});assert.equal(a.$('#currency-unit').value,'sp');assert.equal(a.$('#currency-amount').value,'');
+ c.coins={cp:7,sp:3,ep:0,gp:0,pp:1};a.api.setPage('equipment');a.input('#currency-unit','sp');a.input('#currency-amount','5');a.click('[data-action="spend"]');
+ assert.deepEqual({...c.coins},{cp:7,sp:3,ep:1,gp:9,pp:0});
+ c.coins={cp:10,sp:9,ep:0,gp:0,pp:0};a.api.setPage('equipment');a.input('#currency-amount','1');a.click('[data-action="spend"]');
+ assert.deepEqual({...c.coins},{cp:0,sp:0,ep:0,gp:0,pp:0});
+ a.input('#currency-unit','ep');a.input('#currency-amount','3');a.click('[data-action="gain"]');assert.equal(c.coins.ep,3);
+ await a.api.persist();const b=await app(a.storage);try{assert.equal(b.api.current.coins.ep,3);}finally{b.close();}
+ }finally{a.close();}
+});
+
+test('currency accepts comma-separated denominations and Enter gains once',async()=>{
+ const a=await app();try{const c=a.api.blank('Mixed coins');a.api.use(c);a.api.setPage('equipment');
+ a.input('#currency-amount','10gp, 2 sp, 3CP, 1pp, 2ep, 5 gp');
+ a.$('#currency-amount').dispatchEvent(new a.w.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));
+ assert.deepEqual({...c.coins},{cp:3,sp:2,ep:2,gp:15,pp:1});assert.equal(a.$('#currency-amount').value,'');
+ a.input('#currency-amount','1gp, 2sp');a.$('#currency-amount').dispatchEvent(new a.w.KeyboardEvent('keydown',{key:'Enter',repeat:true,bubbles:true}));assert.equal(c.coins.gp,15);
+ a.click('[data-action="spend"]');assert.deepEqual({...c.coins},{cp:3,sp:0,ep:2,gp:14,pp:1});
+ const before=JSON.stringify(c.coins);
+ for(const amount of ['1gp, nope','1gp,','1gp,,2sp','1gp, 2','1xp','1gp, -2sp','1gp, 1.5sp','1gp, 9007199254740992cp']){a.input('#currency-amount',amount);a.click('[data-action="gain"]');assert.equal(JSON.stringify(c.coins),before);}
+ }finally{a.close();}
+});
+
+test('currency rejects overspending and invalid amounts without changing balances',async()=>{
+ const a=await app();try{const c=a.api.blank('Limited funds');c.coins.gp=1;a.api.use(c);a.api.setPage('equipment');
+ const before=JSON.stringify(c.coins);
+ for(const amount of ['2','0','-1','1.5','abc','9007199254740992']){a.input('#currency-amount',amount);a.click('[data-action="spend"]');assert.equal(JSON.stringify(c.coins),before);assert.equal(a.$('#currency-amount').value,amount);}
+ for(const amount of ['0','-1','1.5','abc','9007199254740992']){a.input('#currency-amount',amount);a.click('[data-action="gain"]');assert.equal(JSON.stringify(c.coins),before);}
+ }finally{a.close();}
+});
+
 test('skill search filters by name and preserves proficiency and expertise selections',async()=>{
  const a=await app();try{const c=a.api.blank('Skill search');c.skills=['Arcana'];a.api.use(c);a.api.setPage('abilities');
  assert.ok(!a.$('#page-content').textContent.includes('Check P for proficiency'));

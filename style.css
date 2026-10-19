@@ -919,28 +919,34 @@ input[type='number'],
   width: 100%;
   min-width: 0;
 }
-.health-actions > [data-action='damage'] {
+.health-actions > [data-action='damage'],
+.currency-actions > [data-action='spend'] {
   background: #452b36;
   border-color: #a65d70;
   color: #ffd3dc;
 }
-.health-actions > [data-action='damage']:hover {
+.health-actions > [data-action='damage']:hover,
+.currency-actions > [data-action='spend']:hover {
   background: #603345;
   border-color: #d18396;
 }
-.health-actions > [data-action='damage']:focus-visible {
+.health-actions > [data-action='damage']:focus-visible,
+.currency-actions > [data-action='spend']:focus-visible {
   outline-color: #f3a7b8;
 }
-.health-actions > [data-action='heal'] {
+.health-actions > [data-action='heal'],
+.currency-actions > [data-action='gain'] {
   background: #203f38;
   border-color: #538c78;
   color: #c4f2df;
 }
-.health-actions > [data-action='heal']:hover {
+.health-actions > [data-action='heal']:hover,
+.currency-actions > [data-action='gain']:hover {
   background: #2a5548;
   border-color: #7ab89f;
 }
-.health-actions > [data-action='heal']:focus-visible {
+.health-actions > [data-action='heal']:focus-visible,
+.currency-actions > [data-action='gain']:focus-visible {
   outline-color: #9edcc3;
 }
 .hp-amount-label {
@@ -2201,4 +2207,44 @@ dialog .form-grid {
 .inventory-list > .inventory-row:last-child {
   padding-bottom: 0;
   border-bottom: 0;
+}
+
+.currency-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(330px, 0.7fr);
+  align-items: center;
+  gap: var(--section-gap);
+}
+.currency-layout .coins {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+}
+.currency-layout .coins .field {
+  gap: 6px;
+}
+.currency-layout .coins input {
+  min-width: 0;
+  text-align: center;
+}
+.currency-actions > select {
+  width: 68px;
+  flex-shrink: 0;
+  min-height: 40px;
+}
+.currency-actions > input {
+  min-width: 65px;
+}
+@media (max-width: 1050px) {
+  .currency-layout {
+    grid-template-columns: 1fr;
+  }
+  .currency-actions {
+    justify-self: end;
+    width: min(100%, 420px);
+  }
+}
+@media (max-width: 480px) {
+  .currency-layout .coins {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }

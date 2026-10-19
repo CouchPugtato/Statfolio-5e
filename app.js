@@ -439,6 +439,63 @@ function healthControls(c) {
       >${field('Temporary HP', 'tempHp', 'number')}${field('Maximum HP', 'maxHp', 'number')}</div
     >`;
 }
+const coinValues = { cp: 1, sp: 10, ep: 50, gp: 100, pp: 1000 };
+
+function parseCurrency(raw, defaultUnit) {
+  const amounts = { cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 };
+  const parts = raw.split(',');
+  for (const part of parts) {
+    const match = part.trim().match(/^(\d+)\s*(cp|sp|ep|gp|pp)?$/i);
+    if (!match || (!match[2] && parts.length > 1)) return null;
+    const amount = Number(match[1]);
+    const unit = match[2]?.toLowerCase() || defaultUnit;
+    if (!Number.isSafeInteger(amount) || amount <= 0) return null;
+    amounts[unit] += amount;
+    if (!Number.isSafeInteger(amounts[unit])) return null;
+  }
+  const cost = Object.entries(coinValues).reduce(
+    (sum, [unit, value]) => sum + amounts[unit] * value,
+    0,
+  );
+  return Number.isSafeInteger(cost) ? { amounts, cost } : null;
+}
+
+function spendCoins(coins, cost) {
+  const remainingCoins = { ...coins };
+  const denominations = Object.keys(coinValues);
+  let remaining = cost;
+  // Use exact change first, then break the smallest larger coins available.
+  for (const unit of [...denominations].reverse()) {
+    const used = Math.min(
+      remainingCoins[unit],
+      Math.floor(remaining / coinValues[unit]),
+    );
+    remainingCoins[unit] -= used;
+    remaining -= used * coinValues[unit];
+  }
+  for (let i = 0; remaining > 0 && i < denominations.length; i++) {
+    const unit = denominations[i];
+    if (!remainingCoins[unit]) continue;
+    const used = Math.min(
+      remainingCoins[unit],
+      Math.ceil(remaining / coinValues[unit]),
+    );
+    remainingCoins[unit] -= used;
+    let change = used * coinValues[unit] - remaining;
+    if (change < 0) {
+      remaining = -change;
+      continue;
+    }
+    remaining = 0;
+    for (let j = i - 1; j >= 0; j--) {
+      const smaller = denominations[j];
+      const count = Math.floor(change / coinValues[smaller]);
+      remainingCoins[smaller] += count;
+      change -= count * coinValues[smaller];
+    }
+  }
+  return remaining === 0 ? remainingCoins : null;
+}
 function spellcastingSummary(c) {
   return /* HTML */ `<section
     class="spell-summary panel"
@@ -634,6 +691,14 @@ document.addEventListener('focusout', (event) => {
 });
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') hideSpellPopup();
+  if (
+    event.key === 'Enter' &&
+    event.target.id === 'currency-amount' &&
+    !event.isComposing
+  ) {
+    event.preventDefault();
+    if (!event.repeat) $('.currency-actions [data-action="gain"]')?.click();
+  }
 });
 window.addEventListener('resize', hideSpellPopup);
 document.addEventListener(
@@ -812,10 +877,28 @@ const views = {
   equipment: (c) =>
     `${panel(
       'Currency',
-      /* HTML */ `<div class="coins"
-        >${Object.keys(c.coins)
-          .map((k) => field(k.toUpperCase(), `coins.${k}`, 'number'))
-          .join('')}</div
+      /* HTML */ `<div class="currency-layout"
+        ><div class="coins"
+          >${Object.keys(c.coins)
+            .map((k) => field(k.toUpperCase(), `coins.${k}`, 'number'))
+            .join('')}</div
+        ><div class="currency-actions health-actions"
+          ><input
+            id="currency-amount"
+            type="text"
+            placeholder="10gp, 2sp"
+            autocomplete="off"
+            aria-label="Currency amount"
+            title="Enter an amount using the selected coin type, or a list such as 10gp, 2sp. Press Enter to gain."
+          /><select id="currency-unit" aria-label="Currency denomination"
+            >${Object.keys(coinValues)
+              .map(
+                (unit) =>
+                  `<option value="${unit}" ${unit === 'gp' ? 'selected' : ''}>${unit.toUpperCase()}</option>`,
+              )
+              .join('')}</select
+          >${button('spend', 'Spend', 'secondary')}${button('gain', 'Gain', 'secondary')}</div
+        ></div
       >`,
     )}${panel(
       'Inventory',
@@ -1471,6 +1554,48 @@ document.addEventListener('click', async (e) => {
       changed();
       renderCharacter();
       break;
+    case 'spend':
+    case 'gain': {
+      const raw = $('#currency-amount').value.trim();
+      const unit = $('#currency-unit').value;
+      const parsed = parseCurrency(raw, unit);
+      if (!parsed) {
+        toast('Enter a positive whole-number amount or a list like 10gp, 2sp.');
+        break;
+      }
+      const { amounts, cost } = parsed;
+      const total = Object.entries(coinValues).reduce(
+        (sum, [key, value]) => sum + c.coins[key] * value,
+        0,
+      );
+      if (
+        !Object.values(c.coins).every(
+          (count) => Number.isSafeInteger(count) && count >= 0,
+        ) ||
+        !Number.isSafeInteger(total) ||
+        (action === 'gain' && !Number.isSafeInteger(total + cost))
+      ) {
+        toast(
+          'Coin balances must be whole numbers within the supported range.',
+        );
+        break;
+      }
+      if (action === 'spend') {
+        const coins = spendCoins(c.coins, cost);
+        if (!coins) {
+          toast('Not enough currency.');
+          break;
+        }
+        c.coins = coins;
+      } else {
+        for (const key of Object.keys(coinValues)) c.coins[key] += amounts[key];
+      }
+      changed();
+      renderCharacter();
+      $('#currency-unit').value = unit;
+      $('#currency-amount').focus();
+      break;
+    }
     case 'heal':
     case 'damage': {
       const raw = $('#hp-amount').value.trim(),
