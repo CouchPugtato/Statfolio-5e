@@ -3024,9 +3024,32 @@ dialog .form-grid {
   border-block: 1px solid var(--line);
 }
 
-#spell-results,
-.spell-filters {
-  margin-top: var(--section-gap);
+/* Separate controls from the spell cards, with more room for filtering. */
+.spellbook-controls {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(0, 2fr);
+  gap: var(--section-gap);
+  margin-bottom: var(--section-gap);
+}
+
+.spellbook-controls > .panel {
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+.spellbook-controls .concentration-tracker {
+  padding-block: 0;
+  border: 0;
+}
+
+.spellbook-controls .spell-filters {
+  margin: 0;
+}
+
+@media (max-width: 760px) {
+  .spellbook-controls {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .concentration-heading {

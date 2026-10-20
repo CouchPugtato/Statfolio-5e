@@ -797,7 +797,7 @@ function endConcentration(character) {
   character.concentrationDamage = [];
 }
 
-function concentrationTracker(character) {
+function concentrationTracker(character, showLabel = true) {
   const active = character.concentrationSpell;
   const damage = character.concentrationDamage || [];
   const candidates = character.spells
@@ -813,7 +813,7 @@ function concentrationTracker(character) {
       ? `<div class="concentration-reminder" role="status"><span><strong>Constitution save · DC ${Math.max(10, Math.floor(damage[0] / 2))}</strong><small>${damage[0]} damage · Save bonus ${sign(saveBonus)}${damage.length > 1 ? ` · ${damage.length} saves pending` : ''}</small></span><div class="concentration-actions">${button('concentration-pass', 'Pass', 'secondary')}${button('concentration-fail', 'Fail', 'secondary danger')}</div></div>`
       : '';
 
-  return `<div class="concentration-tracker"><div class="concentration-heading"><span>Concentration</span><strong>${esc(active || 'None')}</strong>${active ? button('end-concentration', 'End', 'text-button') : ''}</div>
+  return `<div class="concentration-tracker"><div class="concentration-heading">${showLabel ? '<span>Concentration</span>' : ''}<strong>${esc(active || 'None')}</strong>${active ? button('end-concentration', 'End', 'text-button') : ''}</div>
     ${candidates.length ? `<select id="concentration-spell" aria-label="Start or switch concentration spell"><option value="">${active ? 'Switch spell…' : 'Start concentrating…'}</option>${candidates.map(({ spell, index }) => `<option value="${index}">${esc(spell.name)}${spell.level ? ` · Level ${spell.level}` : ' · Cantrip'}</option>`).join('')}</select>` : '<p class="help">Mark a spell as concentration in its editor to track it here.</p>'}
     ${reminder}</div>`;
 }
@@ -1492,11 +1492,11 @@ const views = {
   spells: (c) =>
     /* HTML */ `<div class="spellcasting-layout"
         >${spellSlots(c)}${spellcastingSummary(c)}</div
+      ><div class="spellbook-controls"
+        >${panel('Concentration', concentrationTracker(c, false))}${panel('Search & filters', spellFilterControls(c))}</div
       >${panel(
         'Your spells',
-        concentrationTracker(c) +
-          spellFilterControls(c) +
-          `<div id="spell-results">${spellRecords(c)}</div>`,
+        `<div id="spell-results">${spellRecords(c)}</div>`,
         button('add-spell', '＋ Add spell', 'secondary'),
       )}${panel('Spellcasting notes', area('Rituals, pact magic & other details', 'spellNotes'))}`,
   equipment: (c) =>
