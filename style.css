@@ -3368,3 +3368,97 @@ dialog:has(.combat-log) #modal-form {
 .combat-log-entry-actions > button:disabled {
   cursor: default;
 }
+
+.character-action-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--field-gap);
+}
+
+.character-action-grid > .character-action {
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 12px;
+  background: var(--paper);
+  white-space: normal;
+  text-align: left;
+}
+
+.character-action-grid > .character-action:hover {
+  background: var(--accent-light);
+  border-color: var(--accent);
+}
+
+.character-action strong {
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+@media (max-width: 600px) {
+  .character-action-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+dialog:has(.rest-popup) {
+  width: 560px;
+  max-height: calc(100dvh - 32px);
+  overflow: hidden;
+}
+
+dialog:has(.rest-popup) #modal-form {
+  max-height: calc(100dvh - 94px);
+}
+
+.rest-popup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--group-gap);
+  min-height: 0;
+  max-height: 65dvh;
+  overflow-y: auto;
+  scrollbar-width: none;
+  overscroll-behavior: contain;
+}
+
+.rest-popup::-webkit-scrollbar {
+  display: none;
+}
+
+.rest-popup > p {
+  margin: 0;
+}
+
+.rest-preview {
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--paper);
+}
+
+.rest-preview h3 {
+  font-size: 14px;
+}
+
+.rest-preview ul {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.rest-preview li + li {
+  margin-top: 6px;
+}
+
+/* Compact recovery controls stay beneath the character details. */
+.overview-grid .panel:has(.character-action-grid) {
+  padding: 16px;
+}
+
+.overview-grid .panel:has(.character-action-grid) > .panel-heading {
+  margin-bottom: 12px;
+}

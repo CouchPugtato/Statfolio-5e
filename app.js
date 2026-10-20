@@ -354,6 +354,8 @@ function blank(name = 'New adventurer') {
     attacks: [],
     resources: [],
     combatLog: [],
+    lastShortRest: '',
+    lastLongRest: '',
     features: '',
 
     spells: [],
@@ -577,7 +579,7 @@ function renderLibrary() {
             >`,
         )
         .join('')}</div
-    >${!characters.length ? empty(state.characters.length ? 'No matching characters' : 'No characters yet', state.characters.length ? 'Try a different search.' : 'Create a character to start your sheet and journal.') : ''}`;
+    >${!characters.length ? empty(state.characters.length ? 'No Matching Characters' : 'No Characters Yet', state.characters.length ? 'Try a different search.' : 'Create a character to start your sheet and journal.') : ''}`;
 }
 
 function renderCharacter() {
@@ -853,7 +855,15 @@ const healthLogFields = [
 ];
 
 function combatTarget(character, target) {
-  if (healthLogFields.includes(target) || target === 'hitDiceLeft')
+  if (
+    healthLogFields.includes(target) ||
+    [
+      'hitDiceLeft',
+      'exhaustionLevel',
+      'lastShortRest',
+      'lastLongRest',
+    ].includes(target)
+  )
     return { object: character, key: target };
   const slot = target.match(/^usedSlots\.([0-8])$/);
   if (slot) return { object: character.usedSlots, key: Number(slot[1]) };
@@ -931,6 +941,9 @@ function combatChangeText(change) {
     concentrationSpell: 'Concentration',
     concentrationDamage: 'Pending saves',
     hitDiceLeft: 'Hit dice',
+    exhaustionLevel: 'Exhaustion',
+    lastShortRest: 'Last short rest',
+    lastLongRest: 'Last long rest',
   };
   const label =
     labels[change.target] ||
@@ -940,7 +953,9 @@ function combatChangeText(change) {
   const value = (item) =>
     Array.isArray(item)
       ? String(item.length)
-      : String(item || (typeof item === 'string' ? 'None' : 0));
+      : typeof item === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(item)
+        ? new Date(item).toLocaleString()
+        : String(item || (typeof item === 'string' ? 'None' : 0));
   return `${label}: ${value(change.before)} → ${value(change.after)}`;
 }
 
@@ -972,7 +987,7 @@ function combatLogEntries(character) {
 
 function openCombatLog(character) {
   modal(
-    'Combat log',
+    'Combat Log',
     /* HTML */ `<p class="help"
         >Latest 100 entries · Undo newest first. Later edits to affected values
         can prevent undo.</p
@@ -1028,6 +1043,13 @@ function commitCombatField(element) {
 }
 
 function validCombatValue(target, value) {
+  if (['lastShortRest', 'lastLongRest'].includes(target))
+    return (
+      typeof value === 'string' &&
+      (value === '' || Number.isFinite(Date.parse(value)))
+    );
+  if (target === 'exhaustionLevel')
+    return Number.isInteger(value) && value >= 0 && value <= 6;
   if (target === 'concentrationSpell') return typeof value === 'string';
   if (target === 'concentrationDamage')
     return (
@@ -1065,8 +1087,7 @@ function validateCombatLog(entries) {
       typeof entry.label !== 'string' ||
       typeof entry.undone !== 'boolean' ||
       !Array.isArray(entry.changes) ||
-      !entry.changes.length ||
-      entry.changes.length > 20
+      !entry.changes.length
     )
       throw Error('Invalid combat log entry.');
     ids.add(entry.id);
@@ -1172,7 +1193,7 @@ function conditionsTracker(character) {
     })
     .join('');
 
-  return `<div class="condition-tracker"><span class="condition-heading">Conditions</span><div class="condition-controls"><div id="active-conditions" class="condition-active">${activeConditionChips(character)}</div><div id="condition-picker" role="dialog" aria-label="Manage conditions" ${pickerOpen ? '' : 'hidden'}><div class="condition-picker-heading"><strong>Conditions</strong>${button('close-conditions', '×', 'icon-button', 'aria-label="Close conditions"')}</div><p class="help">2014 5e reference. Apply effects to rolls and stats manually.</p><input id="condition-search" type="search" aria-label="Search conditions" placeholder="Search conditions…" value="${esc(query)}" /><div class="condition-options">${options}</div><p id="condition-search-empty" class="help" role="status" ${matches ? 'hidden' : ''}>No matching conditions.</p><p class="help"><a href="./RULES-LICENSE.md" target="_blank" rel="noopener">SRD 5.1 attribution</a></p></div></div>${field('Condition notes', 'conditions')}</div>`;
+  return `<div class="condition-tracker"><span class="condition-heading">Conditions</span><div class="condition-controls"><div id="active-conditions" class="condition-active">${activeConditionChips(character)}</div><div id="condition-picker" role="dialog" aria-label="Manage conditions" ${pickerOpen ? '' : 'hidden'}><div class="condition-picker-heading"><strong>Conditions</strong>${button('close-conditions', '×', 'icon-button', 'aria-label="Close conditions"')}</div><p class="help">2014 5e reference. Apply effects to rolls and stats manually.</p><input id="condition-search" type="search" aria-label="Search conditions" placeholder="Search conditions…" value="${esc(query)}" /><div class="condition-options">${options}</div><p id="condition-search-empty" class="help" role="status" ${matches ? 'hidden' : ''}>No matching conditions.</p><p class="help"><a href="./RULES-LICENSE.md" target="_blank" rel="noopener">SRD 5.1 attribution</a></p></div></div>${field('Condition Notes', 'conditions')}</div>`;
 }
 
 function filterConditions(query) {
@@ -1305,7 +1326,7 @@ function spellSlots(c) {
       >${values.map((v, i) => /* HTML */ `<td><input type="number" min="0" max="20" data-field="${path}.${i}" value="${v}" aria-label="Level ${i + 1} ${label.toLowerCase()} slots" /></td>`).join('')}</tr
     >`;
   return panel(
-    'Spell slots',
+    'Spell Slots',
     /* HTML */ `<div
       class="slot-table-wrap"
       role="region"
@@ -1335,7 +1356,7 @@ function castingActionType(time = '') {
 
 function actionTypeField(path, entry) {
   const selected = entry.actionType ?? castingActionType(entry.time);
-  return `<label class="field"><span>Action type</span><select data-field="${path}.actionType">${actionTypes.map((type) => `<option value="${type}" ${type === selected ? 'selected' : ''}>${type || 'Not set'}</option>`).join('')}</select></label>`;
+  return `<label class="field"><span>Action Type</span><select data-field="${path}.actionType">${actionTypes.map((type) => `<option value="${type}" ${type === selected ? 'selected' : ''}>${type || 'Not set'}</option>`).join('')}</select></label>`;
 }
 
 function attackRecords(c) {
@@ -1350,13 +1371,13 @@ function attackRecords(c) {
             data-attack-editor="${index}"
           >
             <div class="record-top">
-              ${field('Attack / action', `attacks.${index}.name`)}
+              ${field('Attack / Action', `attacks.${index}.name`)}
               ${button('remove', '×', 'icon-button', `data-list="attacks" data-index="${index}" aria-label="Remove attack"`)}
             </div>
             <div class="form-grid three">
-              ${field('Attack bonus', `attacks.${index}.bonus`)}
+              ${field('Attack Bonus', `attacks.${index}.bonus`)}
               ${field('Damage', `attacks.${index}.damage`)}
-              ${field('Type / range', `attacks.${index}.type`)}
+              ${field('Type / Range', `attacks.${index}.type`)}
             </div>
             ${actionTypeField(`attacks.${index}`, attack)}
             ${area('Notes', `attacks.${index}.notes`)}
@@ -1366,10 +1387,10 @@ function attackRecords(c) {
           </div>`;
         }
         const details = [
-          ['Action type', attack.actionType || ''],
+          ['Action Type', attack.actionType || ''],
           ['Attack', attack.bonus],
           ['Damage', attack.damage],
-          ['Type / range', attack.type],
+          ['Type / Range', attack.type],
         ]
           .filter(([, value]) => value.trim())
           .map(
@@ -1415,8 +1436,8 @@ function combatSpells(character) {
         .filter(Boolean)
         .join(' · ');
       const details = [
-        ['Action type', spell.actionType ?? castingActionType(spell.time)],
-        ['Casting time', spell.time],
+        ['Action Type', spell.actionType ?? castingActionType(spell.time)],
+        ['Casting Time', spell.time],
         ['Range', spell.range],
         ['Duration', spell.duration],
       ]
@@ -1448,7 +1469,7 @@ function combatSpells(character) {
     .join('');
 
   return panel(
-    'Spells known',
+    'Spells Known',
     `<div class="record-list combat-spells">${records}</div>`,
   );
 }
@@ -1697,7 +1718,7 @@ function previewReferenceSpell(id) {
       >${esc(spell.name)}</h3
     ><dl
       >${[
-        ['Casting time', spell.time],
+        ['Casting Time', spell.time],
         ['Range', spell.range],
         ['Components', spell.components],
         ['Duration', spell.duration],
@@ -1725,7 +1746,7 @@ async function importSpellModal(character, trigger) {
     await loadSpellReference();
     if (current() !== character || page !== 'spells') return;
     modal(
-      'Import spell',
+      'Import Spell',
       /* HTML */ `<div class="spell-reference"
         ><p class="help"
           >SRD 5.1 · 2014 rules. Preview a spell, then import an editable copy.
@@ -1794,7 +1815,7 @@ async function importSpellModal(character, trigger) {
 function spellRecords(c) {
   if (!c.spells.length)
     return empty(
-      'An open spellbook',
+      'An Open Spellbook',
       'Add your cantrips and spells, with the details you need at the table.',
     );
   if (!c.spells.some(matchesSpell) && !c.spells.includes(editingSpell))
@@ -1810,14 +1831,14 @@ function spellRecords(c) {
             data-spell-editor="${index}"
           >
             <div class="record-top">
-              ${field('Spell name', `spells.${index}.name`)}
+              ${field('Spell Name', `spells.${index}.name`)}
               ${button('remove', '×', 'icon-button', `data-list="spells" data-index="${index}" aria-label="Remove spell"`)}
             </div>
             <div class="form-grid three">
-              ${field('Level (0 = cantrip)', `spells.${index}.level`, 'number', { max: 9 })}
+              ${field('Level (0 = Cantrip)', `spells.${index}.level`, 'number', { max: 9 })}
               ${field('School', `spells.${index}.school`)}
               ${actionTypeField(`spells.${index}`, spell)}
-              ${field('Casting time', `spells.${index}.time`)}
+              ${field('Casting Time', `spells.${index}.time`)}
               ${field('Range', `spells.${index}.range`)}
               ${field('Components', `spells.${index}.components`)}
               ${field('Duration', `spells.${index}.duration`)}
@@ -1825,7 +1846,7 @@ function spellRecords(c) {
             <div class="spell-flags"
               >${['prepared', 'concentration', 'ritual'].map((flag) => `<label class="check"><input type="checkbox" data-field="spells.${index}.${flag}" ${(flag === 'prepared' ? spell.prepared : spellFlag(spell, flag)) ? 'checked' : ''} /> ${flag[0].toUpperCase() + flag.slice(1)}</label>`).join('')}</div
             >
-            ${area('Effect / description', `spells.${index}.description`)}
+            ${area('Effect / Description', `spells.${index}.description`)}
             <div class="attack-editor-actions"
               >${button('finish-spell', 'Done', 'secondary')}</div
             >
@@ -1841,8 +1862,8 @@ function spellRecords(c) {
           .filter(Boolean)
           .join(' · ');
         const details = [
-          ['Action type', spell.actionType ?? castingActionType(spell.time)],
-          ['Casting time', spell.time],
+          ['Action Type', spell.actionType ?? castingActionType(spell.time)],
+          ['Casting Time', spell.time],
           ['Range', spell.range],
           ['Components', spell.components],
           ['Duration', spell.duration],
@@ -1908,24 +1929,190 @@ function resourceRecords(character) {
           >${field('Resource', `${path}.name`)}${removeButton}</div
         ><div class="form-grid"
           >${field('Remaining', `${path}.remaining`, 'number')}${field('Maximum', `${path}.max`, 'number')}</div
+        ><label class="field"
+          ><span>Resets on</span
+          ><select data-field="${path}.recovery"
+            >${[
+              ['manual', 'Manual'],
+              ['short', 'Short or long rest'],
+              ['long', 'Long rest'],
+            ]
+              .map(
+                ([value, label]) =>
+                  `<option value="${value}" ${(resource.recovery || 'manual') === value ? 'selected' : ''}>${label}</option>`,
+              )
+              .join('')}</select
+          ></label
         ></div
       >`;
     })
     .join('');
 }
 
+// Rest dialogs preview changes, then record one undoable event on confirmation.
+function characterActions() {
+  return panel(
+    'Rest & Recovery',
+    /* HTML */ `<div class="character-action-grid"
+      >${button('short-rest', '<strong>Short Rest</strong>', 'secondary character-action')}${button('rest', '<strong>Long Rest</strong>', 'secondary character-action')}${button('combat-log', '<strong>Combat Log</strong>', 'secondary character-action')}</div
+    >`,
+  );
+}
+
+function restResources(character, type) {
+  return character.resources.filter(
+    (resource) =>
+      resource.recovery === 'short' ||
+      (type === 'long' && resource.recovery === 'long'),
+  );
+}
+
+function restPreview(character, type, dice, healing, reduceExhaustion) {
+  const changes =
+    type === 'long'
+      ? [
+          `HP: ${character.hp} → ${character.maxHp}`,
+          `Temporary HP: ${character.tempHp} → 0`,
+          `Hit dice remaining: ${character.hitDiceLeft} → ${character.hitDiceLeft + dice}`,
+          'Clear death saves and used spell slots.',
+          'End concentration.',
+        ]
+      : [
+          `HP: ${character.hp} → ${Math.min(character.maxHp, character.hp + healing)}`,
+          `Hit dice remaining: ${character.hitDiceLeft} → ${Math.max(0, character.hitDiceLeft - dice)}`,
+        ];
+  for (const resource of restResources(character, type))
+    changes.push(
+      `${resource.name || 'Resource'}: ${resource.remaining} → ${Math.max(resource.remaining, resource.max)}`,
+    );
+  if (reduceExhaustion)
+    changes.push(
+      `Exhaustion: ${character.exhaustionLevel} → ${Math.max(0, character.exhaustionLevel - 1)}`,
+    );
+  return `<ul>${changes.map((change) => `<li>${esc(change)}</li>`).join('')}</ul>`;
+}
+
+function updateRestPreview(character) {
+  const popup = $('.rest-popup');
+  if (!popup) return;
+  const form = $('#modal-form');
+  $('#rest-preview').innerHTML = restPreview(
+    character,
+    popup.dataset.restType,
+    Math.max(0, Number(form.elements.namedItem('dice').value) || 0),
+    Math.max(0, Number(form.elements.namedItem('healing')?.value) || 0),
+    Boolean(form.elements.namedItem('reduce-exhaustion')?.checked),
+  );
+}
+
+function openRestModal(character, type) {
+  const long = type === 'long';
+  const missingDice = Math.max(0, character.level - character.hitDiceLeft);
+  const defaultDice = long
+    ? Math.min(missingDice, Math.max(1, Math.floor(character.level / 2)))
+    : 0;
+  const number = (name, label, value, max) =>
+    `<label class="field"><span>${label}</span><input name="${name}" type="number" min="0" max="${max}" step="1" value="${value}" required /></label>`;
+  const body = /* HTML */ `<div class="rest-popup" data-rest-type="${type}"
+    ><p class="help"
+      >${long ? 'Review recovery before completing your long rest. Hit dice default to half your level (minimum one), capped by spent dice.' : `Hit dice: ${esc(character.hitDice)} · ${character.hitDiceLeft} remaining. Roll the dice you spend, then enter total healing including Constitution modifiers.`}</p
+    ><div class="form-grid"
+      >${number('dice', long ? 'Hit Dice Recovered' : 'Hit Dice Spent', defaultDice, long ? missingDice : character.hitDiceLeft)}${long ? '' : number('healing', 'Rolled Healing Total', 0, Number.MAX_SAFE_INTEGER)}</div
+    >${long && character.exhaustionLevel ? '<label class="check"><input type="checkbox" name="reduce-exhaustion" /> Reduce exhaustion by 1 (food and drink)</label>' : ''}<section
+      class="rest-preview"
+      aria-live="polite"
+      ><h3>Recovery Preview</h3
+      ><div id="rest-preview"
+        >${restPreview(character, type, defaultDice, 0, false)}</div
+      ></section
+    ><p class="help"
+      >Resources recover according to their reset setting. Other effects can be
+      adjusted manually.</p
+    ></div
+  >`;
+  modal(
+    long ? 'Long Rest' : 'Short Rest',
+    body,
+    (data) => {
+      const dice = Number(data.get('dice'));
+      const healing = long ? 0 : Number(data.get('healing'));
+      const limit = long
+        ? Math.max(0, character.level - character.hitDiceLeft)
+        : character.hitDiceLeft;
+      if (
+        !String(data.get('dice')).trim() ||
+        !Number.isSafeInteger(dice) ||
+        dice < 0 ||
+        dice > limit ||
+        !Number.isSafeInteger(healing) ||
+        healing < 0 ||
+        (!long &&
+          (!String(data.get('healing')).trim() || (dice === 0 && healing > 0)))
+      )
+        throw Error(
+          'Enter valid hit dice and healing amounts. Healing requires spending hit dice.',
+        );
+      const resources = restResources(character, type);
+      for (const resource of resources) resource.id ||= uid();
+      const before = combatSnapshot(character, [
+        ...healthLogFields,
+        'hitDiceLeft',
+        long ? 'lastLongRest' : 'lastShortRest',
+        'exhaustionLevel',
+        ...(long
+          ? character.usedSlots.map((_, index) => `usedSlots.${index}`)
+          : []),
+        ...resources.map((resource) => `resource:${resource.id}`),
+      ]);
+      if (long) {
+        character.hp = character.maxHp;
+        character.tempHp = 0;
+        character.usedSlots.fill(0);
+        character.deathSuccess = 0;
+        character.deathFailure = 0;
+        character.hitDiceLeft += dice;
+        endConcentration(character);
+        if (data.has('reduce-exhaustion'))
+          character.exhaustionLevel = Math.max(
+            0,
+            character.exhaustionLevel - 1,
+          );
+        character.lastLongRest = new Date().toISOString();
+      } else {
+        const regained = Math.min(
+          healing,
+          Math.max(0, character.maxHp - character.hp),
+        );
+        character.hp += regained;
+        character.hitDiceLeft -= dice;
+        if (regained > 0) {
+          character.deathSuccess = 0;
+          character.deathFailure = 0;
+        }
+        character.lastShortRest = new Date().toISOString();
+      }
+      for (const resource of resources)
+        resource.remaining = Math.max(resource.remaining, resource.max);
+      recordCombatEvent(character, long ? 'Long Rest' : 'Short Rest', before);
+      changed();
+      renderCharacter();
+    },
+    'Complete rest',
+  );
+}
+
 function characterDetails() {
   const fields = [
-    field('Character name', 'name'),
+    field('Character Name', 'name'),
     field('Class', 'class'),
     field('Subclass', 'subclass'),
     field('Level', 'level', 'number', { max: 20 }),
 
-    field('Species / race', 'species'),
+    field('Species / Race', 'species'),
     field('Background', 'background'),
     field('Alignment', 'alignment'),
-    field('Player name', 'player'),
-    field('Experience points', 'xp', 'number'),
+    field('Player Name', 'player'),
+    field('Experience Points', 'xp', 'number'),
   ];
 
   return `<div class="form-grid">${fields.join('')}</div>`;
@@ -1935,7 +2122,7 @@ const views = {
   overview: (c) =>
     /* HTML */ `<div class="sheet-grid overview-grid"
       ><div
-        >${panel('Ability scores', abilityTiles(c), '<span class="muted">Modifiers calculated automatically</span>')}${panel('Character details', characterDetails())}</div
+        >${panel('Ability Scores', abilityTiles(c), '<span class="muted">Modifiers calculated automatically</span>')}${panel('Character Details', characterDetails())}${characterActions()}</div
       ><div
         >${panel(
           'Reference Stats',
@@ -1951,7 +2138,7 @@ const views = {
               ><strong
                 >${sign(mod(c.abilities[1]) + c.initiativeBonus)}</strong
               ></div
-            ><div><span>Armor class</span><strong>${c.ac}</strong></div></div
+            ><div><span>Armor Class</span><strong>${c.ac}</strong></div></div
           >`,
           /* HTML */ `<label class="check inspiration"
             ><input
@@ -1961,11 +2148,11 @@ const views = {
             />
             Inspiration</label
           >`,
-        )}${panel('Hit points', healthControls(c))}${panel('Quick journal', /* HTML */ `<p class="muted">Catch a name, a clue, or a moment before it slips away.</p>${button('new-note', '＋ Write a note', 'secondary full')}`)}</div
+        )}${panel('Hit Points', healthControls(c))}${panel('Quick Journal', button('new-note', '＋ Write a note', 'secondary full'))}</div
       ></div
     >`,
   abilities: (c) =>
-    `${panel('Ability scores', abilityTiles(c))}<div class="sheet-grid">${panel(
+    `${panel('Ability Scores', abilityTiles(c))}<div class="sheet-grid">${panel(
       'Skills',
       /* HTML */ `<input
           id="skill-search"
@@ -2001,27 +2188,27 @@ const views = {
           .join(
             '',
           )}${filteredSkills().length ? '' : '<p class="muted" role="status">No matching skills.</p>'}`,
-    )}<div>${panel('Saving throws', savingThrows(c))}${panel('Other proficiencies & languages', area('Languages, tools, armor & weapons', 'proficiencies', 'Common, Elvish, thieves’ tools…'))}</div></div>`,
+    )}<div>${panel('Saving Throws', savingThrows(c))}${panel('Other Proficiencies & Languages', area('Languages, Tools, Armor & Weapons', 'proficiencies', 'Common, Elvish, thieves’ tools…'))}</div></div>`,
   combat: (c) =>
     /* HTML */ `<div class="combat-stats"
-        >${field('Armor class', 'ac', 'number')}${field('Speed (ft)', 'speed', 'number')}${field('Initiative adjustment', 'initiativeBonus', 'number')}${field('Hit dice remaining', 'hitDiceLeft', 'number')}${field('Hit dice', 'hitDice')}</div
+        >${field('Armor Class', 'ac', 'number')}${field('Speed (ft)', 'speed', 'number')}${field('Initiative Adjustment', 'initiativeBonus', 'number')}${field('Hit Dice Remaining', 'hitDiceLeft', 'number')}${field('Hit Dice', 'hitDice')}</div
       ><div class="sheet-grid"
         ><div
-          >${panel('Attacks & actions', attackRecords(c), button('add-attack', '＋ Add attack', 'text-button'))}${combatSpells(c)}</div
+          >${panel('Attacks & Actions', attackRecords(c), button('add-attack', '＋ Add attack', 'text-button'))}${combatSpells(c)}</div
         ><div
-          >${panel('Health & recovery', `${healthControls(c)}<div class="form-grid">${field('Death save successes', 'deathSuccess', 'number', { max: 3 })}${field('Death save failures', 'deathFailure', 'number', { max: 3 })}</div>${conditionsTracker(c)}${button('rest', 'Take a long rest', 'secondary full')}`)}${panel('Features & resources', area('Class features, feats & traits', 'features', 'Record your actions, traits, and limited-use abilities.') + resourceRecords(c), button('add-resource', '＋ Add', 'text-button'))}</div
+          >${panel('Health & Recovery', `${healthControls(c)}<div class="form-grid">${field('Death Save Successes', 'deathSuccess', 'number', { max: 3 })}${field('Death Save Failures', 'deathFailure', 'number', { max: 3 })}</div>${conditionsTracker(c)}`)}${panel('Features & Resources', area('Class Features, Feats & Traits', 'features', 'Record your actions, traits, and limited-use abilities.') + resourceRecords(c), button('add-resource', '＋ Add', 'text-button'))}</div
         ></div
       >`,
   spells: (c) =>
     /* HTML */ `<div class="spellcasting-layout"
         >${spellSlots(c)}${spellcastingSummary(c)}</div
       ><div class="spellbook-controls"
-        >${panel('Concentration', concentrationTracker(c, false))}${panel('Search & filters', spellFilterControls(c))}</div
+        >${panel('Concentration', concentrationTracker(c, false))}${panel('Search & Filters', spellFilterControls(c))}</div
       >${panel(
-        'Your spells',
+        'Your Spells',
         `<div id="spell-results">${spellRecords(c)}</div>`,
         `<div class="spellbook-actions">${button('combat-log', 'Combat log', 'secondary')}${button('import-spell', 'Import spell', 'secondary')}${button('add-spell', '＋ Add spell', 'secondary')}</div>`,
-      )}${panel('Spellcasting notes', area('Rituals, pact magic & other details', 'spellNotes'))}`,
+      )}${panel('Spellcasting Notes', area('Rituals, Pact Magic & Other Details', 'spellNotes'))}`,
   equipment: (c) =>
     `${panel(
       'Currency',
@@ -2062,13 +2249,13 @@ const views = {
                         type="checkbox"
                         data-field="equipment.${i}.equipped"
                         ${e.equipped ? 'checked' : ''} /></label
-                    >${field('Item', `equipment.${i}.name`)}${field('Quantity', `equipment.${i}.quantity`, 'number')}${field('Weight (lb each)', `equipment.${i}.weight`, 'number')}${field('Notes', `equipment.${i}.notes`)}${button('remove', '×', 'icon-button', `data-list="equipment" data-index="${i}" aria-label="Remove item"`)}</div
+                    >${field('Item', `equipment.${i}.name`)}${field('Quantity', `equipment.${i}.quantity`, 'number')}${field('Weight (lb Each)', `equipment.${i}.weight`, 'number')}${field('Notes', `equipment.${i}.notes`)}${button('remove', '×', 'icon-button', `data-list="equipment" data-index="${i}" aria-label="Remove item"`)}</div
                   >`,
               )
               .join('') +
             `</div><p class="help">Checkbox = equipped · Total carried weight: <strong>${c.equipment.reduce((n, e) => n + e.quantity * e.weight, 0).toFixed(1)} lb</strong> (all listed items; excludes coins)</p>`
         : empty(
-            'Pack for the journey',
+            'Pack for the Journey',
             'Track your gear, treasures, and the things you can’t leave behind.',
           ),
       button('add-item', '＋ Add item', 'secondary'),
@@ -2076,9 +2263,9 @@ const views = {
   background: (c) =>
     /* HTML */ `<div class="sheet-grid background-grid"
       ><div
-        >${panel('Personality', area('Personality traits', 'personality') + area('Ideals', 'ideals') + area('Bonds', 'bonds') + area('Flaws', 'flaws'))}</div
+        >${panel('Personality', area('Personality Traits', 'personality') + area('Ideals', 'ideals') + area('Bonds', 'bonds') + area('Flaws', 'flaws'))}</div
       ><div
-        >${panel('Your story', area('Appearance', 'appearance') + area('Backstory', 'story') + area('Allies & organizations', 'allies'))}</div
+        >${panel('Your Story', area('Appearance', 'appearance') + area('Backstory', 'story') + area('Allies & Organizations', 'allies'))}</div
       ></div
     >`,
   notes: journalView,
@@ -2131,7 +2318,7 @@ function journalList(c) {
     )
     .sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned));
   return /* HTML */ `<div class="panel-heading"
-      ><h2>Character journal</h2
+      ><h2>Character Journal</h2
       >${button('new-note', '＋ New', 'text-button')}</div
     ><div class="journal-tools"
       ><input
@@ -2184,7 +2371,7 @@ function journalList(c) {
             )
             .join('')
         : empty(
-            c.notes.length ? 'No matching notes' : 'No notes yet',
+            c.notes.length ? 'No Matching Notes' : 'No Notes Yet',
             c.notes.length
               ? 'Try another search or category.'
               : 'Keep your sessions, quests, and discoveries here.',
@@ -2228,7 +2415,7 @@ function journalView(c) {
       >${
         n
           ? /* HTML */ `<div class="panel-heading"
-                ><span class="eyebrow">Note details</span
+                ><span class="eyebrow">Note Details</span
                 ><div class="note-editor-actions"
                   >${button('pin-note', n.pinned ? 'Unpin note' : 'Pin note', 'text-button', `aria-pressed="${!!n.pinned}"`)}${button('delete-note', 'Delete note', 'text-button danger')}</div
                 ></div
@@ -2262,7 +2449,7 @@ ${esc(n.body)}</textarea></label
                 >${(n.images || []).map((img, i) => /* HTML */ `<div><img src="${esc(img)}" alt="Journal attachment ${i + 1}" /><button data-action="remove-note-image" data-index="${i}" aria-label="Remove attachment">×</button></div>`).join('')}</div
               >${button('note-image', '＋ Attach image', 'secondary')}`
           : empty(
-              'The story is yours to write',
+              'The Story Is Yours to Write',
               'Create a note to start keeping track of your adventure.',
               button('new-note', '＋ Write your first note', 'primary'),
             )
@@ -2357,7 +2544,7 @@ function confirmEntryDeletion(character, list, index) {
   if (!item) return;
 
   confirmAction(
-    'Delete entry?',
+    'Delete Entry?',
     'Are you sure you want to delete this entry? You can restore it with Ctrl+Z.',
     () => {
       const currentIndex = character[list].indexOf(item);
@@ -2377,7 +2564,7 @@ function confirmEntryDeletion(character, list, index) {
 
 function createModal() {
   modal(
-    'Begin a new adventure',
+    'Begin a New Adventure',
     /* HTML */ `<p
         >Every legend starts with a name. You can fill in the rest as you go.</p
       ><label class="field"
@@ -2580,6 +2767,12 @@ function validateBackup(input) {
       throw Error('Invalid concentration damage.');
     if (!c.concentrationSpell || c.hp === 0) endConcentration(c);
 
+    if (
+      [c.lastShortRest, c.lastLongRest].some(
+        (value) => value !== '' && !Number.isFinite(Date.parse(value)),
+      )
+    )
+      throw Error('Invalid rest date.');
     c.combatLog = validateCombatLog(c.combatLog);
     c.activeConditions = [...new Set(c.activeConditions)];
     c.skills = [...new Set([...c.skills, ...c.expertise])];
@@ -2633,6 +2826,11 @@ function validateBackup(input) {
           )
             throw Error(`Invalid ${key} entry.`);
           clean[k] = item[k];
+        }
+        if (key === 'resources' && item.recovery !== undefined) {
+          if (!['manual', 'short', 'long'].includes(item.recovery))
+            throw Error('Invalid resource recovery.');
+          clean.recovery = item.recovery;
         }
         if (key === 'resources' && item.id !== undefined) {
           if (
@@ -2721,7 +2919,7 @@ $('#restore-file').onchange = async (e) => {
       throw Error('This backup is too large (maximum 250 MB).');
     const chars = validateBackup(JSON.parse(await file.text()));
     modal(
-      'Restore your folio',
+      'Restore Your Folio',
       /* HTML */ `<p
           >This backup contains
           <strong
@@ -2862,9 +3060,9 @@ document.addEventListener('click', async (e) => {
 
     case 'rename':
       modal(
-        'Edit character identity',
+        'Edit Character Identity',
         /* HTML */ `<div class="form-grid"
-          >${['name', 'class', 'subclass', 'species'].map((k) => /* HTML */ `<label class="field"><span>${k === 'name' ? 'Character name' : k}</span><input name="${k}" value="${esc(c[k])}" ${k === 'name' ? 'required' : ''} /></label>`).join('')}</div
+          >${['name', 'class', 'subclass', 'species'].map((k) => /* HTML */ `<label class="field"><span>${k === 'name' ? 'Character Name' : k[0].toUpperCase() + k.slice(1)}</span><input name="${k}" value="${esc(c[k])}" ${k === 'name' ? 'required' : ''} /></label>`).join('')}</div
         >`,
         (data) => {
           for (const k of ['name', 'class', 'subclass', 'species'])
@@ -2877,7 +3075,7 @@ document.addEventListener('click', async (e) => {
 
     case 'menu':
       modal(
-        'Character options',
+        'Character Options',
         /* HTML */ `<div class="option-buttons"
           >${button('export-sheet-pdf', 'Export sheet PDF', 'secondary')}${button('remove-portrait', 'Remove portrait', 'secondary')}${button('delete-character', 'Delete character', 'secondary danger')}</div
         >`,
@@ -2919,7 +3117,7 @@ document.addEventListener('click', async (e) => {
     case 'delete-character':
       $('#modal').close();
       confirmAction(
-        'Delete this character?',
+        'Delete This Character?',
         `Permanently remove <strong>${esc(c.name)}</strong>, their notes, and images from this browser?`,
         () => {
           state.characters = state.characters.filter((x) => x.id !== c.id);
@@ -2958,7 +3156,7 @@ document.addEventListener('click', async (e) => {
       break;
 
     case 'add-resource':
-      c.resources.push({ name: '', remaining: 0, max: 0 });
+      c.resources.push({ name: '', remaining: 0, max: 0, recovery: 'manual' });
       changed();
       renderCharacter();
       break;
@@ -3159,26 +3357,11 @@ document.addEventListener('click', async (e) => {
     }
 
     case 'rest':
-      confirmAction(
-        'Take a long rest?',
-        'Restore HP to maximum, clear temporary HP and death saves, reset used spell slots, and end concentration. Adjust hit dice and other limited resources manually to match your table’s rules.',
-        () => {
-          const before = combatSnapshot(c, [
-            ...healthLogFields,
-            ...c.usedSlots.map((_, index) => `usedSlots.${index}`),
-          ]);
-          c.hp = c.maxHp;
-          c.tempHp = 0;
-          c.usedSlots.fill(0);
-          endConcentration(c);
-          c.deathSuccess = 0;
-          c.deathFailure = 0;
-          recordCombatEvent(c, 'Long rest', before);
-          changed();
-          renderCharacter();
-        },
-        'Complete rest',
-      );
+      openRestModal(c, 'long');
+      break;
+
+    case 'short-rest':
+      openRestModal(c, 'short');
       break;
 
     case 'new-note': {
@@ -3239,7 +3422,7 @@ document.addEventListener('click', async (e) => {
       const others = c.notes.filter((other) => other !== note);
 
       modal(
-        'Related notes',
+        'Related Notes',
         others.length
           ? `<input id="related-notes-search" type="search" aria-label="Search related notes" placeholder="Search notes…" /><div class="note-link-options">${others.map((other) => `<label class="check" data-note-link="${other.id}"><input type="checkbox" name="links" value="${other.id}" ${note.links?.includes(other.id) ? 'checked' : ''} /><span>${esc(other.title || 'Untitled note')}</span></label>`).join('')}</div><p id="related-notes-empty" role="status" hidden>No matching notes.</p>`
           : '<p>Create another note to link it here.</p>',
@@ -3270,7 +3453,7 @@ document.addEventListener('click', async (e) => {
 
     case 'delete-note':
       confirmAction(
-        'Delete this note?',
+        'Delete This Note?',
         'This removes the note and its attached images.',
         () => {
           c.notes = c.notes.filter((n) => n.id !== noteId);
@@ -3370,6 +3553,10 @@ document.addEventListener('input', (e) => {
     return;
   }
   if (!c) return;
+  if (el.closest('.rest-popup')) {
+    updateRestPreview(c);
+    return;
+  }
   if (el.id === 'spell-reference-search' || el.id === 'spell-reference-level') {
     renderSpellReferenceResults();
     return;
@@ -3608,7 +3795,7 @@ async function init() {
   } catch (err) {
     $('#app').innerHTML = /* HTML */ `<div class="startup-error"
       ><img src="./icon.svg" width="64" alt="" /><h1
-        >Your folio couldn’t be opened</h1
+        >Your Folio Couldn’t Be Opened</h1
       ><p
         >Browser storage may be disabled or the saved data may be unreadable.
         Enable site storage, then reload. Existing data has not been

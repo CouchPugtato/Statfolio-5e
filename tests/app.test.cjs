@@ -1315,6 +1315,7 @@ test('text damage/heal controls work on both pages, absorb temporary HP, cap hea
     c.maxHp = 30;
     c.hp = 1;
     c.deathFailure = 2;
+    a.api.setPage('overview');
     a.click('[data-action="rest"]');
     await a.submit();
     assert.equal(c.hp, 30);
@@ -2361,6 +2362,7 @@ test('concentration ends on zero HP and rest, and invalid damage never creates a
     a.api.setPage('combat');
     a.input('#hp-amount', '1');
     a.click('[data-action="damage"]');
+    a.api.setPage('overview');
     a.click('[data-action="rest"]');
     await a.submit();
     assert.equal(c.concentrationSpell, '');
@@ -2689,10 +2691,10 @@ test('combat shows compact known spells below attacks, ignores spellbook filters
     const list = a.$('.combat-spells');
     assert.ok(list);
     const panel = list.closest('.panel');
-    assert.equal(panel.querySelector('h2').textContent, 'Spells known');
+    assert.equal(panel.querySelector('h2').textContent, 'Spells Known');
     assert.equal(
       panel.previousElementSibling.querySelector('h2').textContent,
-      'Attacks & actions',
+      'Attacks & Actions',
     );
     assert.equal(list.querySelectorAll('.attack-summary').length, 2);
     assert.deepEqual(
@@ -2934,9 +2936,10 @@ test('combat resource history groups typing, follows resource identity, and incl
     a.api.setPage('spells');
     a.input('[data-field="usedSlots.0"]', 2);
     a.api.setPage('combat');
+    a.api.setPage('overview');
     a.click('[data-action="rest"]');
     await a.submit();
-    assert.equal(c.combatLog[0].label, 'Long rest');
+    assert.equal(c.combatLog[0].label, 'Long Rest');
     assert.equal(c.hp, 10);
     assert.equal(c.usedSlots[0], 0);
     a.click('[data-action="combat-log"]');
@@ -3067,6 +3070,182 @@ test('combat log retains only the latest 100 changes and validates its entry lim
       id: 'extra',
     });
     assert.throws(() => a.api.validateBackup(backup), /Invalid combat log/);
+  } finally {
+    a.close();
+  }
+});
+
+test('character actions open compact popups and short rest previews healing and eligible resources without changing combat state on cancel', async () => {
+  const a = await app();
+  try {
+    const c = a.api.blank('Rest actions');
+    c.level = 5;
+    c.hp = 7;
+    c.maxHp = 30;
+    c.tempHp = 5;
+    c.hitDice = '5d8';
+    c.hitDiceLeft = 4;
+    c.usedSlots[0] = 2;
+    c.concentrationSpell = 'Ward';
+    c.resources = [
+      { name: 'Ki', remaining: 0, max: 3, recovery: 'short' },
+      { name: 'Daily', remaining: 0, max: 2, recovery: 'long' },
+      { name: 'Manual', remaining: 0, max: 1 },
+    ];
+    a.api.use(c);
+    assert.equal(a.$('.character-action-grid').children.length, 3);
+    assert.equal(
+      a
+        .$('.character-action-grid')
+        .closest('.panel')
+        .previousElementSibling.querySelector('h2').textContent,
+      'Character Details',
+    );
+    assert.equal(
+      a.$('.character-action-grid [data-action="sheet-options"]'),
+      null,
+    );
+    const before = JSON.stringify(c);
+    a.click('[data-action="short-rest"]');
+    a.input('[name="dice"]', 2);
+    a.input('[name="healing"]', 99);
+    assert.match(a.$('#rest-preview').textContent, /HP: 7 → 30/);
+    assert.match(a.$('#rest-preview').textContent, /Hit dice remaining: 4 → 2/);
+    assert.match(a.$('#rest-preview').textContent, /Ki: 0 → 3/);
+    assert.doesNotMatch(a.$('#rest-preview').textContent, /Daily/);
+    a.click('[data-action="close-modal"]');
+    assert.equal(JSON.stringify(c), before);
+    a.click('[data-action="short-rest"]');
+    await a.submit({ dice: 2, healing: 12 });
+    assert.equal(c.hp, 19);
+    assert.equal(c.hitDiceLeft, 2);
+    assert.equal(c.tempHp, 5);
+    assert.equal(c.usedSlots[0], 2);
+    assert.equal(c.concentrationSpell, 'Ward');
+    assert.deepEqual(
+      c.resources.map((resource) => resource.remaining),
+      [3, 0, 0],
+    );
+    assert.ok(c.lastShortRest);
+    assert.equal(a.$('.rest-history'), null);
+    assert.equal(c.combatLog[0].label, 'Short Rest');
+    a.click('[data-action="combat-log"]');
+    a.click('.combat-log [data-action="undo-combat-event"]:not(:disabled)');
+    assert.equal(c.hp, 7);
+    assert.equal(c.hitDiceLeft, 4);
+    assert.equal(c.resources[0].remaining, 0);
+    assert.equal(c.lastShortRest, '');
+    a.click('[data-action="close-modal"]');
+    a.api.setPage('combat');
+    assert.equal(a.$('[data-action="rest"]'), null);
+  } finally {
+    a.close();
+  }
+});
+
+test('long rest previews half-level hit dice, resource resets, optional exhaustion, and supports full undo and persistence', async () => {
+  const a = await app();
+  let reopened;
+  try {
+    const c = a.api.blank('Long recovery');
+    c.level = 5;
+    c.hp = 7;
+    c.maxHp = 30;
+    c.tempHp = 2;
+    c.hitDiceLeft = 1;
+    c.usedSlots[0] = 1;
+    c.exhaustionLevel = 2;
+    c.deathFailure = 1;
+    c.concentrationSpell = 'Ward';
+    c.resources = [
+      { name: 'Short', remaining: 0, max: 3, recovery: 'short' },
+      { name: 'Long', remaining: 1, max: 4, recovery: 'long' },
+      { name: 'Manual', remaining: 0, max: 2 },
+    ];
+    a.api.use(c);
+    const before = JSON.stringify(c);
+    a.click('[data-action="rest"]');
+    assert.equal(a.$('[name="dice"]').value, '2');
+    assert.equal(a.$('[name="reduce-exhaustion"]').checked, false);
+    a.click('[data-action="close-modal"]');
+    assert.equal(JSON.stringify(c), before);
+    a.click('[data-action="rest"]');
+    a.input('[name="reduce-exhaustion"]', true);
+    assert.match(a.$('#rest-preview').textContent, /Exhaustion: 2 → 1/);
+    await a.submit();
+    assert.equal(c.hp, 30);
+    assert.equal(c.tempHp, 0);
+    assert.equal(c.hitDiceLeft, 3);
+    assert.equal(c.usedSlots[0], 0);
+    assert.equal(c.deathFailure, 0);
+    assert.equal(c.concentrationSpell, '');
+    assert.equal(c.exhaustionLevel, 1);
+    assert.deepEqual(
+      c.resources.map((resource) => resource.remaining),
+      [3, 4, 0],
+    );
+    assert.ok(c.lastLongRest);
+    await a.api.persist();
+    reopened = await app(a.storage);
+    assert.equal(reopened.api.current.lastLongRest, c.lastLongRest);
+    assert.equal(reopened.api.current.resources[0].recovery, 'short');
+    assert.equal(reopened.api.current.resources[1].recovery, 'long');
+    reopened.click('[data-action="combat-log"]');
+    reopened.click(
+      '.combat-log [data-action="undo-combat-event"]:not(:disabled)',
+    );
+    const restored = reopened.api.current;
+    assert.equal(restored.hp, 7);
+    assert.equal(restored.tempHp, 2);
+    assert.equal(restored.hitDiceLeft, 1);
+    assert.equal(restored.usedSlots[0], 1);
+    assert.equal(restored.exhaustionLevel, 2);
+    assert.equal(restored.deathFailure, 1);
+    assert.equal(restored.concentrationSpell, 'Ward');
+    assert.equal(restored.lastLongRest, '');
+    assert.deepEqual(
+      Array.from(restored.resources, (resource) => resource.remaining),
+      [0, 1, 0],
+    );
+  } finally {
+    reopened?.close();
+    a.close();
+  }
+});
+
+test('rest inputs reject invalid spending and old resources default to manual recovery', async () => {
+  const a = await app();
+  try {
+    const c = a.api.blank('Valid rest');
+    c.resources = [{ name: 'Legacy', remaining: 0, max: 3 }];
+    a.api.use(c);
+    const before = JSON.stringify(c);
+    a.click('[data-action="short-rest"]');
+    for (const values of [
+      { dice: 0, healing: 3 },
+      { dice: 2, healing: 3 },
+      { dice: 0.5, healing: 3 },
+      { dice: 1, healing: -1 },
+    ]) {
+      await a.submit(values);
+      assert.equal(a.$('#modal').open, true);
+      assert.equal(JSON.stringify(c), before);
+    }
+    a.click('[data-action="close-modal"]');
+    a.api.setPage('combat');
+    assert.equal(a.$('[data-field="resources.0.recovery"]').value, 'manual');
+    a.input('[data-field="resources.0.recovery"]', 'long');
+    assert.equal(c.resources[0].recovery, 'long');
+    c.resources[0].recovery = 'invalid';
+    assert.throws(
+      () =>
+        a.api.validateBackup({
+          format: 'statfolio',
+          version: 1,
+          characters: [c],
+        }),
+      /Invalid resource recovery/,
+    );
   } finally {
     a.close();
   }
