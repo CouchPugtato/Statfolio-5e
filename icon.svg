@@ -1,1 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#2563a6"/><g fill="none" stroke="#eff6ff" stroke-width="2"><path d="m32 8 22 16-8 27H18L10 24Z"/><path d="m32 8-12 29h24Zm-22 16 10 13-2 14m36-27L44 37l2 14M20 37l12 14 12-14"/></g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="14" fill="#2563a6" />
+  <!-- Face-on orthographic projection of a regular icosahedron. -->
+  <g fill="none" stroke="#eff6ff" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M32 8 52.78 20V44L32 56 11.22 44V20Z" />
+    <path d="M32 17.17 44.85 39.42H19.15Z" />
+    <path d="M32 8V17.17M11.22 20 32 17.17 52.78 20 44.85 39.42 52.78 44M11.22 20 19.15 39.42 11.22 44M19.15 39.42 32 56 44.85 39.42" />
+  </g>
+</svg>

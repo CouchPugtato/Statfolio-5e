@@ -1176,11 +1176,13 @@ function combatSpells(character) {
           aria-label="Edit ${esc(spell.name || 'unnamed spell')} in spellbook"
         >
           <span class="attack-summary-heading"
-            ><strong>${esc(spell.name.trim() || 'Unnamed spell')}</strong
+            ><span class="combat-spell-title"
+              ><strong>${esc(spell.name.trim() || 'Unnamed spell')}</strong
+              ><span class="spell-record-meta">${esc(metadata)}</span></span
             ><span class="attack-edit-label">Edit</span></span
           >
-          <span class="spell-record-meta">${esc(metadata)}</span>
-          ${details ? `<span class="attack-summary-stats">${details}</span>` : ''} </button
+          ${details ? `<span class="attack-summary-stats">${details}</span>` : ''}
+          ${spell.description.trim() ? `<span class="attack-summary-notes spell-description">${esc(spell.description)}</span>` : ''} </button
         >${spellConcentrationButton(character, spell, index)}</div
       >`;
     })

@@ -2709,6 +2709,16 @@ test('combat shows compact known spells below attacks, ignores spellbook filters
     assert.match(list.textContent, /Ward <test>/);
     assert.match(list.textContent, /Bonus action/);
     assert.match(list.textContent, /Prepared · Concentration · Ritual/);
+    assert.match(
+      list.querySelector(
+        '[data-index="0"] .attack-summary-heading .spell-record-meta',
+      ).textContent,
+      /Level 1/,
+    );
+    assert.equal(
+      list.querySelector('[data-index="0"] .attack-summary-notes').textContent,
+      'Full ward description <script>',
+    );
     assert.equal(list.querySelector('test'), null);
     const ward = list.querySelector('[data-index="0"]');
     ward.dispatchEvent(new a.w.Event('pointerover', { bubbles: true }));

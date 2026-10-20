@@ -3265,3 +3265,15 @@ dialog:has(.spell-reference) {
   box-shadow: 0 0 0 1px var(--accent);
   text-decoration: none;
 }
+
+.combat-spell-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  min-width: 0;
+}
+
+.combat-spell-summary .spell-description {
+  -webkit-line-clamp: 2;
+}
