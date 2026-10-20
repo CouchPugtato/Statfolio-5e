@@ -3250,3 +3250,178 @@ test('rest inputs reject invalid spending and old resources default to manual re
     a.close();
   }
 });
+
+test('bundled equipment reference preserves descriptions and stats with per-item ammunition and calculated pack weights', () => {
+  const reference = JSON.parse(
+    fs.readFileSync('assets/reference/equipment.json', 'utf8'),
+  );
+  assert.equal(reference.length, 237);
+  assert.equal(
+    new Set(reference.map((item) => item.id)).size,
+    reference.length,
+  );
+  for (const item of reference) {
+    for (const key of ['id', 'name', 'category', 'cost', 'notes'])
+      assert.equal(typeof item[key], 'string');
+    assert.ok(Number.isSafeInteger(item.quantity) && item.quantity > 0);
+    assert.ok(
+      item.weight === null ||
+        (Number.isFinite(item.weight) && item.weight >= 0),
+    );
+  }
+  const find = (id) => reference.find((item) => item.id === id);
+  assert.equal(find('longsword').weight, 3);
+  assert.match(find('longsword').notes, /Damage: 1d8 slashing/);
+  assert.match(find('longsword').notes, /Two-handed damage: 1d10/);
+  assert.match(find('chain-mail').notes, /Armor class: 16/);
+  assert.match(find('shield').notes, /Armor class bonus: \+2/);
+  assert.match(find('rope-hempen-50-feet').notes, /DC 17 Strength/);
+  assert.equal(find('arrow').quantity, 20);
+  assert.equal(find('arrow').weight, 0.05);
+  assert.equal(find('sling-bullet').weight, 0.075);
+  assert.equal(find('explorers-pack').weight, 59);
+  assert.match(find('explorers-pack').notes, /Contents:/);
+  assert.match(find('explorers-pack').notes, /Weight calculated/);
+  assert.equal(find('horse-riding').weight, null);
+  assert.match(find('horse-riding').notes, /Weight not listed/);
+});
+
+test('equipment reference searches, filters, previews, and imports editable items with correct quantity and weight', async () => {
+  const a = await app();
+  let reopened;
+  try {
+    const reference = JSON.parse(
+      fs.readFileSync('assets/reference/equipment.json', 'utf8'),
+    );
+    const requests = [];
+    a.w.fetch = async (url) => {
+      requests.push(String(url));
+      return { ok: true, json: async () => structuredClone(reference) };
+    };
+    const c = a.api.blank('Equipment import');
+    c.coins.gp = 100;
+    a.api.use(c);
+    a.api.setPage('equipment');
+    const before = JSON.stringify(c);
+    a.click('[data-action="import-equipment"]');
+    await settle();
+    assert.deepEqual(requests, [
+      'https://example.test/Statfolio-5e/assets/reference/equipment.json',
+    ]);
+    assert.equal(a.$('#modal').open, true);
+    assert.equal(a.$('#modal button[type="submit"]').disabled, true);
+    const search = a.$('#equipment-reference-search');
+    assert.equal(a.w.document.activeElement, search);
+    a.input('#equipment-reference-search', ' HEMPEN ');
+    assert.equal(
+      a.w.document.querySelectorAll('.equipment-reference-choice').length,
+      1,
+    );
+    assert.equal(a.w.document.activeElement, search);
+    a.input('#equipment-reference-category', 'Armor');
+    assert.match(
+      a.$('#equipment-reference-results').textContent,
+      /No matching equipment/,
+    );
+    a.input('#equipment-reference-category', '');
+    a.click('[data-reference-id="rope-hempen-50-feet"]');
+    assert.match(
+      a.$('#equipment-reference-preview').textContent,
+      /DC 17 Strength/,
+    );
+    assert.equal(JSON.stringify(c), before);
+    const enter = new a.w.KeyboardEvent('keydown', {
+      key: 'Enter',
+      bubbles: true,
+      cancelable: true,
+    });
+    search.dispatchEvent(enter);
+    assert.equal(enter.defaultPrevented, true);
+    await a.submit({ quantity: 2 });
+    const rope = reference.find((item) => item.id === 'rope-hempen-50-feet');
+    assert.deepEqual(JSON.parse(JSON.stringify(c.equipment[0])), {
+      name: rope.name,
+      quantity: 2,
+      weight: 10,
+      notes: rope.notes,
+      equipped: false,
+    });
+    assert.equal(c.coins.gp, 100);
+    assert.match(a.$('#page-content').textContent, /20.0 lb/);
+    a.input('[data-field="equipment.0.name"]', 'My rope');
+    a.click('[data-action="import-equipment"]');
+    await settle();
+    a.input('#equipment-reference-search', 'arrow');
+    a.click('[data-reference-id="arrow"]');
+    assert.equal(a.$('#equipment-reference-quantity').value, '20');
+    await a.submit();
+    assert.equal(c.equipment[1].quantity, 20);
+    assert.equal(c.equipment[1].weight, 0.05);
+    assert.match(a.$('#page-content').textContent, /21.0 lb/);
+    assert.equal(requests.length, 1);
+    await a.api.persist();
+    reopened = await app(a.storage);
+    assert.equal(reopened.api.current.equipment[0].name, 'My rope');
+    assert.equal(reopened.api.current.equipment[0].notes, rope.notes);
+    assert.equal(reopened.api.current.equipment[1].weight, 0.05);
+    await a.api.exportBackup();
+    const backup = JSON.parse(await a.download().text());
+    assert.equal(
+      a.api.validateBackup(backup)[0].equipment[0].notes,
+      rope.notes,
+    );
+  } finally {
+    reopened?.close();
+    a.close();
+  }
+});
+
+test('equipment import cancels safely, retries failed loads, rejects invalid quantities, and marks unknown weights', async () => {
+  const a = await app();
+  try {
+    const c = a.api.blank('Safe equipment');
+    a.api.use(c);
+    a.api.setPage('equipment');
+    let requests = 0;
+    a.w.fetch = async () => {
+      requests++;
+      return requests === 1
+        ? { ok: false }
+        : {
+            ok: true,
+            json: async () =>
+              JSON.parse(
+                fs.readFileSync('assets/reference/equipment.json', 'utf8'),
+              ),
+          };
+    };
+    const before = JSON.stringify(c);
+    a.click('[data-action="import-equipment"]');
+    await settle();
+    assert.equal(a.$('[data-action="import-equipment"]').disabled, false);
+    assert.equal(a.$('#modal').open, false);
+    assert.equal(JSON.stringify(c), before);
+    a.click('[data-action="import-equipment"]');
+    await settle();
+    a.click('[data-reference-id="horse-riding"]');
+    assert.match(a.$('#equipment-reference-preview').textContent, /Not listed/);
+    for (const quantity of [0, -1, 1.5]) {
+      await a.submit({ quantity });
+      assert.equal(a.$('#modal').open, true);
+      assert.equal(JSON.stringify(c), before);
+    }
+    a.click('[data-action="close-modal"]');
+    assert.equal(JSON.stringify(c), before);
+    a.click('[data-action="import-equipment"]');
+    await settle();
+    assert.equal(a.$('#equipment-reference-id').value, '');
+    assert.equal(a.$('#modal button[type="submit"]').disabled, true);
+    a.click('[data-reference-id="horse-riding"]');
+    await a.submit({ quantity: 1 });
+    assert.equal(c.equipment[0].weight, 0);
+    assert.match(c.equipment[0].notes, /Weight not listed/);
+    assert.equal(requests, 2);
+  } finally {
+    a.close();
+  }
+});

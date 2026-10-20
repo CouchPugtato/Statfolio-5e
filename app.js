@@ -1622,7 +1622,11 @@ function undoDeletedEntry(event) {
 document.addEventListener('keydown', (event) => {
   if (
     event.key === 'Enter' &&
-    ['related-notes-search', 'spell-reference-search'].includes(event.target.id)
+    [
+      'related-notes-search',
+      'spell-reference-search',
+      'equipment-reference-search',
+    ].includes(event.target.id)
   ) {
     event.preventDefault();
     return;
@@ -1695,7 +1699,7 @@ function renderSpellReferenceResults() {
         (spell) =>
           /* HTML */ `<button
             type="button"
-            class="spell-reference-choice"
+            class="spell-reference-choice reference-choice"
             data-action="preview-reference-spell"
             data-reference-id="${esc(spell.id)}"
             aria-pressed="${spell.id === selected}"
@@ -1728,7 +1732,9 @@ function previewReferenceSpell(id) {
             `<div><dt>${label}</dt><dd>${esc(value)}</dd></div>`,
         )
         .join('')}</dl
-    ><div class="spell-reference-description">${esc(spell.description)}</div>`;
+    ><div class="spell-reference-description reference-description"
+      >${esc(spell.description)}</div
+    >`;
   $('#modal button[type="submit"]').disabled = false;
   for (const choice of document.querySelectorAll('.spell-reference-choice')) {
     choice.setAttribute(
@@ -1747,14 +1753,14 @@ async function importSpellModal(character, trigger) {
     if (current() !== character || page !== 'spells') return;
     modal(
       'Import Spell',
-      /* HTML */ `<div class="spell-reference"
+      /* HTML */ `<div class="spell-reference reference-picker"
         ><p class="help"
           >SRD 5.1 · 2014 rules. Preview a spell, then import an editable copy.
           <a href="./RULES-LICENSE.md" target="_blank" rel="noopener"
             >Source & license</a
           ></p
         ><input type="hidden" name="reference-id" id="spell-reference-id" /><div
-          class="spell-reference-filters"
+          class="spell-reference-filters reference-filters"
           ><input
             type="search"
             id="spell-reference-search"
@@ -1765,13 +1771,15 @@ async function importSpellModal(character, trigger) {
             ><option value="">All levels</option
             >${Array.from({ length: 10 }, (_, level) => `<option value="${level}">${level ? `Level ${level}` : 'Cantrip'}</option>`).join('')}</select
           ><small id="spell-reference-count" role="status"></small></div
-        ><div class="spell-reference-layout"
+        ><div class="spell-reference-layout reference-layout"
           ><div
             id="spell-reference-results"
+            class="reference-results"
             aria-label="Spell reference results"
           ></div
           ><section
             id="spell-reference-preview"
+            class="reference-preview"
             tabindex="0"
             aria-label="Selected spell preview"
             ><p class="muted"
@@ -1805,6 +1813,182 @@ async function importSpellModal(character, trigger) {
   } catch (error) {
     toast(
       error.message || 'Could not load the spell reference. Please try again.',
+    );
+  } finally {
+    trigger.disabled = false;
+    trigger.textContent = label;
+  }
+}
+
+// Equipment uses the same local reference picker layout as spells.
+let equipmentReferencePromise;
+let equipmentReference = [];
+
+async function loadEquipmentReference() {
+  if (!equipmentReferencePromise) {
+    equipmentReferencePromise = (async () => {
+      const response = await fetch(
+        new URL('./assets/reference/equipment.json', document.baseURI),
+      );
+      if (!response.ok)
+        throw Error(
+          'Could not load the equipment reference. Please try again.',
+        );
+      equipmentReference = await response.json();
+      return equipmentReference;
+    })().catch((error) => {
+      equipmentReferencePromise = null;
+      throw error;
+    });
+  }
+  return equipmentReferencePromise;
+}
+
+function renderEquipmentReferenceResults() {
+  const query = $('#equipment-reference-search')
+    .value.trim()
+    .toLocaleLowerCase();
+  const category = $('#equipment-reference-category').value;
+  const selected = $('#equipment-reference-id').value;
+  const matches = equipmentReference.filter(
+    (item) =>
+      item.name.toLocaleLowerCase().includes(query) &&
+      (!category || item.category === category),
+  );
+  $('#equipment-reference-results').innerHTML =
+    matches
+      .map(
+        (item) =>
+          /* HTML */ `<button
+            type="button"
+            class="reference-choice equipment-reference-choice"
+            data-action="preview-reference-equipment"
+            data-reference-id="${esc(item.id)}"
+            aria-pressed="${item.id === selected}"
+            ><strong>${esc(item.name)}</strong
+            ><small
+              >${esc(item.category)} ·
+              ${item.weight === null ? 'Weight not listed' : `${item.weight} lb each`}</small
+            ></button
+          >`,
+      )
+      .join('') || '<p class="muted" role="status">No matching equipment.</p>';
+  $('#equipment-reference-count').textContent = `${matches.length} items`;
+}
+
+function previewReferenceEquipment(id) {
+  const item = equipmentReference.find((entry) => entry.id === id);
+  if (!item) return;
+  $('#equipment-reference-id').value = id;
+  $('#equipment-reference-quantity').value = item.quantity;
+  $('#equipment-reference-preview').innerHTML = /* HTML */ `<h3
+      >${esc(item.name)}</h3
+    ><dl
+      ><div
+        ><dt>Weight Each</dt
+        ><dd
+          >${item.weight === null ? 'Not listed — set manually after import' : `${item.weight} lb`}</dd
+        ></div
+      ><div><dt>Listed Cost</dt><dd>${esc(item.cost)}</dd></div></dl
+    ><div class="reference-description">${esc(item.notes)}</div>`;
+  $('#modal button[type="submit"]').disabled = false;
+  for (const choice of document.querySelectorAll('.equipment-reference-choice'))
+    choice.setAttribute(
+      'aria-pressed',
+      String(choice.dataset.referenceId === id),
+    );
+}
+
+async function importEquipmentModal(character, trigger) {
+  const label = trigger.textContent;
+  trigger.disabled = true;
+  trigger.textContent = 'Loading…';
+  try {
+    await loadEquipmentReference();
+    if (current() !== character || page !== 'equipment') return;
+    const categories = [
+      ...new Set(equipmentReference.map((item) => item.category)),
+    ].sort();
+    modal(
+      'Import Equipment',
+      /* HTML */ `<div class="reference-picker equipment-reference"
+        ><p class="help"
+          >SRD 5.1 · 2014 rules. Preview equipment, then add an editable
+          inventory entry.
+          <a href="./RULES-LICENSE.md" target="_blank" rel="noopener"
+            >Source & License</a
+          ></p
+        ><input
+          type="hidden"
+          name="reference-id"
+          id="equipment-reference-id"
+        /><div class="reference-filters"
+          ><input
+            type="search"
+            id="equipment-reference-search"
+            aria-label="Search equipment reference by name"
+            placeholder="Search equipment…" /><select
+            id="equipment-reference-category"
+            aria-label="Filter equipment by category"
+            ><option value="">All categories</option
+            >${categories.map((category) => `<option>${esc(category)}</option>`).join('')}</select
+          ><small id="equipment-reference-count" role="status"></small></div
+        ><label class="field equipment-import-quantity"
+          ><span>Quantity</span
+          ><input
+            id="equipment-reference-quantity"
+            name="quantity"
+            type="number"
+            min="1"
+            max="${Number.MAX_SAFE_INTEGER}"
+            step="1"
+            value="1"
+            required /></label
+        ><div class="reference-layout"
+          ><div
+            id="equipment-reference-results"
+            class="reference-results"
+            aria-label="Equipment reference results"
+          ></div
+          ><section
+            id="equipment-reference-preview"
+            class="reference-preview"
+            tabindex="0"
+            aria-label="Selected equipment preview"
+            ><p class="muted"
+              >Select an item to preview its details.</p
+            ></section
+          ></div
+        ></div
+      >`,
+      (data) => {
+        const reference = equipmentReference.find(
+          (item) => item.id === data.get('reference-id'),
+        );
+        if (!reference) throw Error('Choose equipment to import.');
+        const quantity = Number(data.get('quantity'));
+        if (!Number.isSafeInteger(quantity) || quantity < 1)
+          throw Error('Enter a positive whole-number quantity.');
+        character.equipment.push({
+          name: reference.name,
+          quantity,
+          weight: reference.weight ?? 0,
+          notes: reference.notes,
+          equipped: false,
+        });
+        changed();
+        renderCharacter();
+        toast(`${reference.name} imported.`);
+      },
+      'Import Equipment',
+    );
+    $('#modal button[type="submit"]').disabled = true;
+    renderEquipmentReferenceResults();
+    $('#equipment-reference-search').focus();
+  } catch (error) {
+    toast(
+      error.message ||
+        'Could not load the equipment reference. Please try again.',
     );
   } finally {
     trigger.disabled = false;
@@ -2258,7 +2442,7 @@ const views = {
             'Pack for the Journey',
             'Track your gear, treasures, and the things you can’t leave behind.',
           ),
-      button('add-item', '＋ Add item', 'secondary'),
+      `<div class="inventory-actions">${button('import-equipment', 'Import Equipment', 'secondary')}${button('add-item', '＋ Add item', 'secondary')}</div>`,
     )}`,
   background: (c) =>
     /* HTML */ `<div class="sheet-grid background-grid"
@@ -3215,6 +3399,14 @@ document.addEventListener('click', async (e) => {
       renderCharacter();
       break;
 
+    case 'import-equipment':
+      await importEquipmentModal(c, btn);
+      break;
+
+    case 'preview-reference-equipment':
+      previewReferenceEquipment(btn.dataset.referenceId);
+      break;
+
     case 'add-item':
       c.equipment.push({
         name: '',
@@ -3557,6 +3749,13 @@ document.addEventListener('input', (e) => {
     updateRestPreview(c);
     return;
   }
+  if (
+    el.id === 'equipment-reference-search' ||
+    el.id === 'equipment-reference-category'
+  ) {
+    renderEquipmentReferenceResults();
+    return;
+  }
   if (el.id === 'spell-reference-search' || el.id === 'spell-reference-level') {
     renderSpellReferenceResults();
     return;
@@ -3678,6 +3877,10 @@ document.addEventListener('change', (e) => {
   const el = e.target,
     c = current();
   if (!c) return;
+  if (el.id === 'equipment-reference-category') {
+    renderEquipmentReferenceResults();
+    return;
+  }
   if (el.id === 'spell-reference-level') {
     renderSpellReferenceResults();
     return;

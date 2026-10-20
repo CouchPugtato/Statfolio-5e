@@ -3084,18 +3084,25 @@ dialog .form-grid {
   display: flex;
   gap: 8px;
 }
-.spellbook-actions {
+.spellbook-actions,
+.inventory-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
 }
 
-dialog:has(.spell-reference) {
+dialog:has(.reference-picker) {
   width: 920px;
   max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+  scrollbar-width: none;
 }
 
-.spell-reference-filters {
+dialog:has(.reference-picker)::-webkit-scrollbar {
+  display: none;
+}
+
+.reference-filters {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -3103,36 +3110,36 @@ dialog:has(.spell-reference) {
   margin-bottom: var(--field-gap);
 }
 
-.spell-reference-filters > input {
+.reference-filters > input {
   flex: 2 1 200px;
   min-width: 0;
 }
 
-.spell-reference-filters > select {
+.reference-filters > select {
   flex: 1 1 130px;
   width: auto;
 }
 
-.spell-reference-layout {
+.reference-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr);
   gap: var(--section-gap);
 }
 
-#spell-reference-results,
-#spell-reference-preview {
+.reference-results,
+.reference-preview {
   min-height: 0;
   max-height: 50dvh;
   overflow-y: auto;
   scrollbar-width: none;
 }
 
-#spell-reference-results::-webkit-scrollbar,
-#spell-reference-preview::-webkit-scrollbar {
+.reference-results::-webkit-scrollbar,
+.reference-preview::-webkit-scrollbar {
   display: none;
 }
 
-.spell-reference-choice {
+.reference-choice {
   display: block;
   width: 100%;
   margin-bottom: 8px;
@@ -3142,18 +3149,18 @@ dialog:has(.spell-reference) {
   text-align: left;
 }
 
-.spell-reference-choice[aria-pressed='true'] {
+.reference-choice[aria-pressed='true'] {
   border-color: var(--accent);
   background: var(--accent-light);
 }
 
-.spell-reference-choice small {
+.reference-choice small {
   display: block;
   margin-top: 4px;
   color: var(--muted);
 }
 
-#spell-reference-preview {
+.reference-preview {
   padding: 14px;
   border: 1px solid var(--line);
   border-radius: 4px;
@@ -3161,48 +3168,48 @@ dialog:has(.spell-reference) {
   overflow-wrap: anywhere;
 }
 
-#spell-reference-preview h3 {
+.reference-preview h3 {
   margin: 0 0 14px;
   color: var(--accent);
 }
 
-#spell-reference-preview dl {
+.reference-preview dl {
   display: grid;
   gap: 8px;
   margin: 0 0 16px;
   font-size: 12px;
 }
 
-#spell-reference-preview dl > div {
+.reference-preview dl > div {
   display: grid;
   grid-template-columns: 85px minmax(0, 1fr);
   gap: 8px;
 }
 
-#spell-reference-preview dt {
+.reference-preview dt {
   color: var(--muted);
 }
 
-#spell-reference-preview dd {
+.reference-preview dd {
   margin: 0;
 }
 
-.spell-reference-description {
+.reference-description {
   white-space: pre-wrap;
   font-size: 13px;
   line-height: 1.65;
 }
 
 @media (max-width: 600px) {
-  .spell-reference-layout {
+  .reference-layout {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  #spell-reference-results {
+  .reference-results {
     max-height: 24dvh;
   }
 
-  #spell-reference-preview {
+  .reference-preview {
     max-height: 32dvh;
   }
 }
@@ -3461,4 +3468,9 @@ dialog:has(.rest-popup) #modal-form {
 
 .overview-grid .panel:has(.character-action-grid) > .panel-heading {
   margin-bottom: 12px;
+}
+
+.equipment-import-quantity {
+  max-width: 240px;
+  margin-bottom: var(--field-gap);
 }

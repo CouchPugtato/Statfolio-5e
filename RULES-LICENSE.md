@@ -13,3 +13,9 @@ The JSON transcription comes from [5e-bits/5e-database](https://github.com/5e-bi
 Adaptations: fields are mapped to the app's spell editor; material components are combined with component letters; higher-level effects are appended to descriptions; Markdown heading markers are removed and paragraph/table spacing is normalized. Other transcription text is retained. Imported copies can be edited by the user.
 
 Rest previews use SRD 5.1 recovery defaults. Short-rest healing is entered from the player's dice rolls, including Constitution modifiers. Long-rest hit-die recovery defaults to half the character's level, rounded down with a minimum of one, capped by spent dice. Resource recovery and exhaustion reduction are selected by the user.
+
+## Equipment Reference
+
+The bundled equipment reference contains 237 SRD 5.1 equipment entries from the same pinned 5e-bits transcription, file `src/2014/en/5e-SRD-Equipment.json`. The SRD attribution and MIT notice above also apply here.
+
+Adaptations: equipment descriptions and mechanical details are combined into inventory notes. Ammunition bundle weights are divided by their listed quantities to obtain weight per item; their listed quantity is the default import quantity. Pack weights are calculated from listed contents when all component weights are known. Items without a known weight are explicitly marked; imports use a placeholder weight of zero for manual correction. Importing does not spend currency, apply armor class, or create attacks.
