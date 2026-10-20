@@ -2990,3 +2990,29 @@ dialog .form-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
+
+/* Spellbook filters wrap onto compact rows on narrow screens. */
+.spell-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--field-gap);
+  margin-bottom: var(--section-gap);
+}
+
+.spell-filters > input {
+  flex: 2 1 200px;
+  min-width: 0;
+}
+
+.spell-filters > select {
+  flex: 1 1 145px;
+  width: auto;
+  min-width: 0;
+}
+
+.spell-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+}

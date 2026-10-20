@@ -129,6 +129,92 @@ let noteFilter = 'all';
 let journalCharacterId = null;
 let editingAttack = null;
 let editingSpell = null;
+let spellFilters = {
+  name: '',
+  level: '',
+  school: '',
+  prepared: '',
+  concentration: '',
+  ritual: '',
+};
+
+// Older spells stored these details as free text rather than checkboxes.
+function spellFlag(spell, flag) {
+  return (
+    spell[flag] ??
+    new RegExp(`\\b${flag}\\b`, 'i').test(
+      flag === 'concentration' ? spell.duration : spell.time,
+    )
+  );
+}
+
+function matchesSpell(spell) {
+  return (
+    spell.name
+      .toLocaleLowerCase()
+      .includes(spellFilters.name.trim().toLocaleLowerCase()) &&
+    (spellFilters.level === '' || spell.level === Number(spellFilters.level)) &&
+    (spellFilters.school === '' ||
+      spell.school.trim().toLocaleLowerCase() === spellFilters.school) &&
+    ['prepared', 'concentration', 'ritual'].every(
+      (flag) =>
+        spellFilters[flag] === '' ||
+        Boolean(
+          flag === 'prepared' ? spell.prepared : spellFlag(spell, flag),
+        ) ===
+          (spellFilters[flag] === 'yes'),
+    )
+  );
+}
+
+function spellFilterControls(c) {
+  const select = (key, label, options) =>
+    `<select data-spell-filter="${key}" aria-label="${label}">${[['', label], ...options].map(([value, text]) => `<option value="${esc(value)}" ${spellFilters[key] === value ? 'selected' : ''}>${esc(text)}</option>`).join('')}</select>`;
+  const schools = [
+    ...new Set(
+      c.spells
+        .map((spell) => spell.school.trim().toLocaleLowerCase())
+        .filter(Boolean),
+    ),
+  ].sort();
+
+  return `<div class="spell-filters"><input type="search" data-spell-filter="name" aria-label="Search spells by name" placeholder="Search spells…" value="${esc(spellFilters.name)}" />
+    ${select(
+      'level',
+      'All levels',
+      Array.from({ length: 10 }, (_, level) => [
+        String(level),
+        level ? `Level ${level}` : 'Cantrip',
+      ]),
+    )}
+    ${select(
+      'school',
+      'All schools',
+      schools.map((school) => [
+        school,
+        school[0].toLocaleUpperCase() + school.slice(1),
+      ]),
+    )}
+    ${select('prepared', 'Any preparation', [
+      ['yes', 'Prepared'],
+      ['no', 'Not prepared'],
+    ])}
+    ${select('concentration', 'Any concentration', [
+      ['yes', 'Concentration'],
+      ['no', 'No concentration'],
+    ])}
+    ${select('ritual', 'Any ritual status', [
+      ['yes', 'Ritual'],
+      ['no', 'Not ritual'],
+    ])}
+    ${button('clear-spell-filters', 'Clear', 'text-button')}</div>`;
+}
+
+function renderSpellResults(c) {
+  hideSpellPopup();
+  $('#spell-results').innerHTML = spellRecords(c);
+  growTextAreas($('#spell-results'));
+}
 
 const deletedEntries = [];
 
@@ -497,6 +583,14 @@ function renderCharacter() {
   if (skillCharacterId !== c.id) {
     skillCharacterId = c.id;
     skillSearch = '';
+    spellFilters = {
+      name: '',
+      level: '',
+      school: '',
+      prepared: '',
+      concentration: '',
+      ritual: '',
+    };
     editingAttack = null;
     editingSpell = null;
   }
@@ -1157,9 +1251,13 @@ function spellRecords(c) {
       'An open spellbook',
       'Add your cantrips and spells, with the details you need at the table.',
     );
+  if (!c.spells.some(matchesSpell) && !c.spells.includes(editingSpell))
+    return '<p class="muted" role="status">No matching spells. Try changing or clearing your filters.</p>';
+
   return /* HTML */ `<div class="spell-grid"
     >${c.spells
       .map((spell, index) => {
+        if (!matchesSpell(spell) && editingSpell !== spell) return '';
         if (editingSpell === spell) {
           return /* HTML */ `<div
             class="record spell-editor"
@@ -1177,13 +1275,8 @@ function spellRecords(c) {
               ${field('Components', `spells.${index}.components`)}
               ${field('Duration', `spells.${index}.duration`)}
             </div>
-            <label class="check"
-              ><input
-                type="checkbox"
-                data-field="spells.${index}.prepared"
-                ${spell.prepared ? 'checked' : ''}
-              />
-              Prepared</label
+            <div class="spell-flags"
+              >${['prepared', 'concentration', 'ritual'].map((flag) => `<label class="check"><input type="checkbox" data-field="spells.${index}.${flag}" ${(flag === 'prepared' ? spell.prepared : spellFlag(spell, flag)) ? 'checked' : ''} /> ${flag[0].toUpperCase() + flag.slice(1)}</label>`).join('')}</div
             >
             ${area('Effect / description', `spells.${index}.description`)}
             <div class="attack-editor-actions"
@@ -1195,6 +1288,8 @@ function spellRecords(c) {
           spell.level === 0 ? 'Cantrip' : `Level ${spell.level}`,
           spell.school.trim(),
           spell.prepared ? 'Prepared' : '',
+          spellFlag(spell, 'concentration') ? 'Concentration' : '',
+          spellFlag(spell, 'ritual') ? 'Ritual' : '',
         ]
           .filter(Boolean)
           .join(' · ');
@@ -1370,7 +1465,8 @@ const views = {
         >${spellSlots(c)}${spellcastingSummary(c)}</div
       >${panel(
         'Your spells',
-        spellRecords(c),
+        spellFilterControls(c) +
+          `<div id="spell-results">${spellRecords(c)}</div>`,
         button('add-spell', '＋ Add spell', 'secondary'),
       )}${panel('Spellcasting notes', area('Rituals, pact magic & other details', 'spellNotes'))}`,
   equipment: (c) =>
@@ -1975,6 +2071,13 @@ function validateBackup(input) {
             throw Error(`Invalid ${key} entry.`);
           clean[k] = item[k];
         }
+        if (key === 'spells') {
+          for (const flag of ['concentration', 'ritual']) {
+            if (item[flag] !== undefined && typeof item[flag] !== 'boolean')
+              throw Error('Invalid spell flag.');
+            clean[flag] = spellFlag(item, flag);
+          }
+        }
         if (key === 'notes') {
           if (!/^[a-zA-Z0-9_-]{1,100}$/.test(item.id) || noteIds.has(item.id))
             throw Error('Invalid or duplicate note ID.');
@@ -2273,6 +2376,19 @@ document.addEventListener('click', async (e) => {
       renderCharacter();
       break;
 
+    case 'clear-spell-filters':
+      spellFilters = {
+        name: '',
+        level: '',
+        school: '',
+        prepared: '',
+        concentration: '',
+        ritual: '',
+      };
+      renderCharacter();
+      $('[data-spell-filter="name"]')?.focus();
+      break;
+
     case 'add-spell':
       c.spells.push({
         name: '',
@@ -2284,6 +2400,8 @@ document.addEventListener('click', async (e) => {
         duration: '',
         description: '',
         prepared: false,
+        concentration: false,
+        ritual: false,
       });
       editingSpell = c.spells.at(-1);
       changed();
@@ -2617,6 +2735,11 @@ document.addEventListener('input', (e) => {
     $('#related-notes-empty').hidden = matches > 0;
     return;
   }
+  if (el.dataset.spellFilter) {
+    spellFilters[el.dataset.spellFilter] = el.value;
+    renderSpellResults(c);
+    return;
+  }
   if (el.id === 'skill-search') {
     skillSearch = el.value;
     renderCharacter();
@@ -2702,6 +2825,11 @@ document.addEventListener('change', (e) => {
   const el = e.target,
     c = current();
   if (!c) return;
+  if (el.dataset.spellFilter) {
+    spellFilters[el.dataset.spellFilter] = el.value;
+    renderSpellResults(c);
+    return;
+  }
   if (el.dataset.condition) {
     const name = el.dataset.condition;
     if (name === 'Exhaustion' || !Object.hasOwn(conditionRules, name)) return;

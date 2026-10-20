@@ -828,6 +828,8 @@ test('all removable boxes share confirmation, support cancellation, and undo wit
           duration: '1 hour',
           description: 'Bright light',
           prepared: true,
+          concentration: false,
+          ritual: false,
         },
         '.spell-record-summary',
       ],
@@ -2135,6 +2137,123 @@ test('restored character calculations reject invalid indexes and preserve expert
       '+9',
     );
   } finally {
+    a.close();
+  }
+});
+
+test('spell filters combine without changing data, preserve original indexes, and reset per character', async () => {
+  const a = await app();
+  try {
+    const c = a.api.blank('Filtered spells');
+    const spell = (name, level, school, prepared, concentration, ritual) => ({
+      name,
+      level,
+      school,
+      prepared,
+      concentration,
+      ritual,
+      time: '',
+      range: '',
+      components: '',
+      duration: '',
+      description: '',
+    });
+    c.spells = [
+      spell('Fire bolt', 0, 'Evocation', false, false, false),
+      spell('Detect magic', 1, 'Divination', true, true, true),
+      spell('Magic missile', 1, 'Evocation', true, false, false),
+      spell('Detect thoughts', 2, 'Divination', false, true, false),
+    ];
+    a.api.use(c);
+    a.api.setPage('spells');
+    const before = JSON.stringify(c);
+    const edits = a.api.state.backupHistory.changesSinceExport;
+    const names = () =>
+      [...a.w.document.querySelectorAll('.spell-record-summary strong')].map(
+        (el) => el.textContent,
+      );
+    const filter = (key, value) =>
+      a.input(`[data-spell-filter="${key}"]`, value);
+    const search = a.$('[data-spell-filter="name"]');
+    search.focus();
+    filter('name', '  DETECT ');
+    assert.equal(a.w.document.activeElement, search);
+    assert.deepEqual(names(), ['Detect magic', 'Detect thoughts']);
+    filter('school', 'divination');
+    filter('prepared', 'yes');
+    filter('concentration', 'yes');
+    filter('ritual', 'yes');
+    filter('level', '1');
+    assert.deepEqual(names(), ['Detect magic']);
+    assert.equal(a.$('.spell-record-summary').dataset.index, '1');
+    assert.equal(JSON.stringify(c), before);
+    assert.equal(a.api.state.backupHistory.changesSinceExport, edits);
+    a.click('.spell-record-summary');
+    a.input('[data-field="spells.1.name"]', 'Detect arcana');
+    a.click('[data-action="finish-spell"]');
+    assert.match(a.$('#spell-results').textContent, /Detect arcana/);
+    filter('ritual', 'no');
+    assert.match(a.$('#spell-results').textContent, /No matching spells/);
+    a.click('[data-action="add-spell"]');
+    assert.ok(a.$('[data-spell-editor="4"]'));
+    a.input('[data-field="spells.4.name"]', 'New spell');
+    a.click('[data-action="finish-spell"]');
+    a.click('[data-action="clear-spell-filters"]');
+    assert.equal(names().length, 5);
+    filter('level', '0');
+    assert.deepEqual(names(), ['Fire bolt', 'New spell']);
+    filter('prepared', 'no');
+    filter('concentration', 'no');
+    filter('ritual', 'no');
+    assert.deepEqual(names(), ['Fire bolt', 'New spell']);
+    a.api.setPage('combat');
+    a.api.setPage('spells');
+    assert.equal(a.$('[data-spell-filter="level"]').value, '0');
+    a.api.use(a.api.blank('Other character'));
+    assert.equal(a.$('[data-spell-filter="level"]').value, '');
+  } finally {
+    a.close();
+  }
+});
+
+test('spell flags migrate old text, preserve explicit choices in backups, and persist after reload', async () => {
+  const a = await app();
+  let reopened;
+  try {
+    const c = a.api.blank('Legacy spell');
+    c.spells = [
+      {
+        name: 'Legacy ritual',
+        level: 1,
+        school: 'Divination',
+        prepared: true,
+        time: '1 action (ritual)',
+        duration: 'Concentration, up to 1 minute',
+        range: '',
+        components: '',
+        description: '',
+      },
+    ];
+    const backup = () => ({ format: 'statfolio', version: 1, characters: [c] });
+    let clean = a.api.validateBackup(backup())[0];
+    assert.equal(clean.spells[0].ritual, true);
+    assert.equal(clean.spells[0].concentration, true);
+    c.spells[0].ritual = 'yes';
+    assert.throws(() => a.api.validateBackup(backup()), /Invalid spell flag/);
+    delete c.spells[0].ritual;
+    a.api.use(clean);
+    a.api.setPage('spells');
+    a.click('.spell-record-summary');
+    assert.equal(a.$('[data-field="spells.0.concentration"]').checked, true);
+    a.input('[data-field="spells.0.concentration"]', false);
+    a.input('[data-field="spells.0.ritual"]', false);
+    a.click('[data-action="finish-spell"]');
+    await a.api.persist();
+    reopened = await app(a.storage);
+    assert.equal(reopened.api.current.spells[0].concentration, false);
+    assert.equal(reopened.api.current.spells[0].ritual, false);
+  } finally {
+    reopened?.close();
     a.close();
   }
 });
