@@ -2508,8 +2508,12 @@ test('spell reference searches, previews, and imports editable independent copie
     );
     assert.deepEqual(JSON.parse(JSON.stringify(c.spells[0])), {
       ...expected,
+      actionType: 'Action',
       prepared: false,
     });
+    assert.equal(a.$('[data-spell-editor]'), null);
+    assert.match(a.$('.spell-record-summary').textContent, /Fireball/);
+    a.click('.spell-record-summary');
     assert.equal(a.$('[data-field="spells.0.name"]').value, 'Fireball');
     a.input('[data-field="spells.0.name"]', 'Custom fireball');
     a.click('[data-action="finish-spell"]');
@@ -2518,6 +2522,11 @@ test('spell reference searches, previews, and imports editable independent copie
     a.input('#spell-reference-search', 'detect magic');
     a.click('[data-reference-id="detect-magic"]');
     await a.submit();
+    assert.equal(a.$('[data-spell-editor]'), null);
+    assert.equal(
+      a.w.document.querySelectorAll('.spell-record-summary').length,
+      2,
+    );
     assert.equal(c.spells[1].concentration, true);
     assert.equal(c.spells[1].ritual, true);
     assert.equal(c.spells[0].name, 'Custom fireball');
@@ -2570,6 +2579,67 @@ test('spell reference cancellation and failed loads preserve character data and 
     assert.equal(a.$('#spell-reference-id').value, '');
     assert.equal(a.$('#modal button[type="submit"]').disabled, true);
   } finally {
+    a.close();
+  }
+});
+
+test('action types edit, display, infer spell timing, and persist with backup validation', async () => {
+  const a = await app();
+  let reopened;
+  try {
+    const c = a.api.blank('Action economy');
+    a.api.use(c);
+    a.api.setPage('combat');
+    a.click('[data-action="add-attack"]');
+    a.input('[data-field="attacks.0.name"]', 'Quick strike');
+    a.input('[data-field="attacks.0.actionType"]', 'Bonus action');
+    a.click('[data-action="finish-attack"]');
+    assert.match(a.$('.attack-summary').textContent, /Bonus action/);
+    a.click('.attack-summary');
+    assert.equal(
+      a.$('[data-field="attacks.0.actionType"]').value,
+      'Bonus action',
+    );
+    a.api.setPage('spells');
+    a.click('[data-action="add-spell"]');
+    a.input('[data-field="spells.0.name"]', 'Quick spell');
+    for (const [time, type] of [
+      ['1 bonus action', 'Bonus action'],
+      ['1 reaction, when attacked', 'Reaction'],
+      ['1 action', 'Action'],
+      ['10 minutes', 'Other'],
+    ]) {
+      a.input('[data-field="spells.0.time"]', time);
+      assert.equal(a.$('[data-field="spells.0.actionType"]').value, type);
+      assert.equal(c.spells[0].actionType, type);
+    }
+    a.input('[data-field="spells.0.actionType"]', 'Reaction');
+    a.click('[data-action="finish-spell"]');
+    assert.match(a.$('.spell-record-summary').textContent, /Reaction/);
+    assert.match(a.$('.spell-record-summary').textContent, /10 minutes/);
+    const backup = () => ({ format: 'statfolio', version: 1, characters: [c] });
+    let restored = a.api.validateBackup(backup())[0];
+    assert.equal(restored.attacks[0].actionType, 'Bonus action');
+    assert.equal(restored.spells[0].actionType, 'Reaction');
+    c.spells[0].actionType = 'invalid';
+    assert.throws(() => a.api.validateBackup(backup()), /Invalid action type/);
+    c.spells[0].actionType = 'Reaction';
+    await a.api.persist();
+    reopened = await app(a.storage);
+    assert.equal(reopened.api.current.attacks[0].actionType, 'Bonus action');
+    assert.equal(reopened.api.current.spells[0].actionType, 'Reaction');
+    // Older backups infer their selector and summary from the original casting time.
+    delete c.spells[0].actionType;
+    c.spells[0].time = '1 bonus action';
+    a.api.setPage('combat');
+    a.api.setPage('spells');
+    a.click('.spell-record-summary');
+    assert.equal(
+      a.$('[data-field="spells.0.actionType"]').value,
+      'Bonus action',
+    );
+  } finally {
+    reopened?.close();
     a.close();
   }
 });

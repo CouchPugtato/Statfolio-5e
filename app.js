@@ -1042,6 +1042,21 @@ function spellSlots(c) {
   );
 }
 
+const actionTypes = ['', 'Action', 'Bonus action', 'Reaction', 'Other'];
+
+function castingActionType(time = '') {
+  const timing = time.trim().toLocaleLowerCase();
+  if (/^(?:1 )?bonus action\b/.test(timing)) return 'Bonus action';
+  if (/^(?:1 )?reaction\b/.test(timing)) return 'Reaction';
+  if (/^(?:1 )?action\b/.test(timing)) return 'Action';
+  return timing ? 'Other' : '';
+}
+
+function actionTypeField(path, entry) {
+  const selected = entry.actionType ?? castingActionType(entry.time);
+  return `<label class="field"><span>Action type</span><select data-field="${path}.actionType">${actionTypes.map((type) => `<option value="${type}" ${type === selected ? 'selected' : ''}>${type || 'Not set'}</option>`).join('')}</select></label>`;
+}
+
 function attackRecords(c) {
   if (!c.attacks.length)
     return '<p class="muted">Add your weapons, attacks, and special actions.</p>';
@@ -1062,6 +1077,7 @@ function attackRecords(c) {
               ${field('Damage', `attacks.${index}.damage`)}
               ${field('Type / range', `attacks.${index}.type`)}
             </div>
+            ${actionTypeField(`attacks.${index}`, attack)}
             ${area('Notes', `attacks.${index}.notes`)}
             <div class="attack-editor-actions"
               >${button('finish-attack', 'Done', 'secondary')}</div
@@ -1069,6 +1085,7 @@ function attackRecords(c) {
           </div>`;
         }
         const details = [
+          ['Action type', attack.actionType || ''],
           ['Attack', attack.bonus],
           ['Damage', attack.damage],
           ['Type / range', attack.type],
@@ -1406,12 +1423,15 @@ async function importSpellModal(character, trigger) {
         );
         if (!reference) throw Error('Choose a spell to import.');
         const { id, ...fields } = reference;
-        const spell = { ...fields, prepared: false };
+        const spell = {
+          ...fields,
+          actionType: castingActionType(fields.time),
+          prepared: false,
+        };
         character.spells.push(spell);
-        editingSpell = spell;
+        editingSpell = null;
         changed();
         renderCharacter();
-        $('[data-spell-editor] input')?.focus();
         toast(`${spell.name} imported.`);
       },
       'Import spell',
@@ -1454,6 +1474,7 @@ function spellRecords(c) {
             <div class="form-grid three">
               ${field('Level (0 = cantrip)', `spells.${index}.level`, 'number', { max: 9 })}
               ${field('School', `spells.${index}.school`)}
+              ${actionTypeField(`spells.${index}`, spell)}
               ${field('Casting time', `spells.${index}.time`)}
               ${field('Range', `spells.${index}.range`)}
               ${field('Components', `spells.${index}.components`)}
@@ -1478,6 +1499,7 @@ function spellRecords(c) {
           .filter(Boolean)
           .join(' · ');
         const details = [
+          ['Action type', spell.actionType ?? castingActionType(spell.time)],
           ['Casting time', spell.time],
           ['Range', spell.range],
           ['Components', spell.components],
@@ -2264,6 +2286,13 @@ function validateBackup(input) {
             throw Error(`Invalid ${key} entry.`);
           clean[k] = item[k];
         }
+        if (key === 'attacks' || key === 'spells') {
+          if (item.actionType !== undefined) {
+            if (!actionTypes.includes(item.actionType))
+              throw Error('Invalid action type.');
+            clean.actionType = item.actionType;
+          }
+        }
         if (key === 'spells') {
           for (const flag of ['concentration', 'ritual']) {
             if (item[flag] !== undefined && typeof item[flag] !== 'boolean')
@@ -2545,7 +2574,14 @@ document.addEventListener('click', async (e) => {
       break;
 
     case 'add-attack':
-      c.attacks.push({ name: '', bonus: '', damage: '', type: '', notes: '' });
+      c.attacks.push({
+        name: '',
+        bonus: '',
+        damage: '',
+        type: '',
+        actionType: '',
+        notes: '',
+      });
       editingAttack = c.attacks.at(-1);
       changed();
       renderCharacter();
@@ -2596,6 +2632,7 @@ document.addEventListener('click', async (e) => {
         level: 0,
         school: '',
         time: '',
+        actionType: '',
         range: '',
         components: '',
         duration: '',
@@ -2996,6 +3033,13 @@ document.addEventListener('input', (e) => {
       }
     }
     set(c, el.dataset.field, value);
+    const timingField = el.dataset.field.match(/^spells\.(\d+)\.time$/);
+    if (timingField) {
+      const spell = c.spells[Number(timingField[1])];
+      spell.actionType = castingActionType(value);
+      const selector = $(`[data-field="spells.${timingField[1]}.actionType"]`);
+      if (selector) selector.value = spell.actionType;
+    }
     pendingBackupEdits.add(el);
     changed(false);
     if (refreshesValues(el.dataset.field)) scheduleRefresh();

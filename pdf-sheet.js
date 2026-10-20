@@ -508,7 +508,7 @@
       character.attacks
         .map(
           (attack) =>
-            `${attack.name || 'Unnamed attack'}: ${[attack.bonus, attack.damage, attack.type].filter(Boolean).join(' · ')}${attack.notes ? `\n${attack.notes}` : ''}`,
+            `${attack.name || 'Unnamed attack'}: ${[attack.actionType, attack.bonus, attack.damage, attack.type].filter(Boolean).join(' · ')}${attack.notes ? `\n${attack.notes}` : ''}`,
         )
         .join('\n\n'),
       { title: 'Attacks & actions — full details' },
@@ -659,6 +659,7 @@
       const details = [
         Number(spell.level) === 0 ? 'Cantrip' : `Level ${spell.level}`,
         spell.school,
+        spell.actionType && `Action type: ${spell.actionType}`,
         spell.time && `Casting time: ${spell.time}`,
         spell.range && `Range: ${spell.range}`,
         spell.components && `Components: ${spell.components}`,
