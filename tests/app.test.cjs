@@ -5,6 +5,7 @@ const { randomUUID } = require('node:crypto');
 const { JSDOM } = require('jsdom');
 const { IDBFactory } = require('fake-indexeddb');
 const source = fs.readFileSync('app.js', 'utf8');
+const pdfSource = fs.readFileSync('pdf-sheet.js', 'utf8');
 const html = fs.readFileSync('index.html', 'utf8');
 const image = 'data:image/png;base64,iVBORw0KGgo=';
 const settle = () => new Promise((resolve) => setTimeout(resolve, 25));
@@ -32,6 +33,7 @@ async function app(storage = new IDBFactory()) {
     return 'blob:test';
   };
   w.URL.revokeObjectURL = () => {};
+  w.eval(pdfSource);
   w.eval(
     source.replace(/init\(\);\s*$/, '') +
       `
@@ -90,6 +92,57 @@ async function app(storage = new IDBFactory()) {
     close: () => dom.window.close(),
   };
 }
+
+test('PDF export uses a fresh character snapshot and downloads without changing character or backup history', async () => {
+  const a = await app();
+
+  try {
+    const character = a.api.blank('PDF / Hero');
+    a.api.use(character);
+    a.input('[data-field="name"]', 'Updated / Hero', false);
+    const before = JSON.stringify(character);
+    const changes = a.api.state.backupHistory.changesSinceExport;
+    let snapshot;
+    a.w.StatfolioPDF.create = async (copy, rules) => {
+      snapshot = copy;
+      assert.equal(rules.prof(copy), 2);
+      assert.notEqual(copy, character);
+      return new Uint8Array([37, 80, 68, 70]);
+    };
+    a.click('[data-action="menu"]');
+    a.click('[data-action="export-sheet-pdf"]');
+    await settle();
+    assert.equal(snapshot.name, 'Updated / Hero');
+    assert.equal(a.download().type, 'application/pdf');
+    assert.equal(await a.download().text(), '%PDF');
+    assert.equal(a.$('#modal').open, false);
+    assert.equal(JSON.stringify(character), before);
+    assert.equal(a.api.state.backupHistory.changesSinceExport, changes);
+    assert.equal(a.$('[data-field="name"]').value, 'Updated / Hero');
+  } finally {
+    a.close();
+  }
+});
+
+test('PDF export errors keep the character and allow retry', async () => {
+  const a = await app();
+
+  try {
+    a.api.use(a.api.blank('Retry PDF'));
+    a.w.StatfolioPDF.create = async () => {
+      throw Error('Template could not be loaded.');
+    };
+    a.click('[data-action="menu"]');
+    a.click('[data-action="export-sheet-pdf"]');
+    await settle();
+    assert.equal(a.$('#modal').open, true);
+    assert.equal(a.$('[data-action="export-sheet-pdf"]').disabled, false);
+    assert.match(a.$('#toast').textContent, /Template could not be loaded/);
+    assert.equal(a.download(), undefined);
+  } finally {
+    a.close();
+  }
+});
 
 test('condition tracker selects conditions, expands references, tracks exhaustion, and preserves notes', async () => {
   const a = await app();

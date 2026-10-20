@@ -4,7 +4,8 @@
   "description": "A static, browser-saved character companion for fifth-edition tabletop games. No account, API keys, build tools, or server required.",
   "main": "app.js",
   "scripts": {
-    "test": "node --test tests/app.test.cjs"
+    "test": "node --test tests/*.test.cjs",
+    "vendor:pdf": "node scripts/copy-pdf-libraries.cjs"
   },
   "repository": {
     "type": "git",
@@ -19,7 +20,9 @@
   },
   "homepage": "https://github.com/CouchPugtato/Statfolio-5e#readme",
   "devDependencies": {
+    "@pdf-lib/fontkit": "1.1.1",
     "fake-indexeddb": "^6.2.6",
-    "jsdom": "^30.1.3"
+    "jsdom": "^30.1.3",
+    "pdf-lib": "1.17.1"
   }
 }

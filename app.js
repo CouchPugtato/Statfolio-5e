@@ -1622,6 +1622,47 @@ ${esc(n.body)}</textarea></label
   >`;
 }
 
+// Export an editable copy of the original PDF template, entirely in the browser.
+async function exportCharacterPDF(button) {
+  const character = current();
+  if (!character) return;
+
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = 'Creating PDF…';
+
+  try {
+    const snapshot = structuredClone(character);
+    const bytes = await window.StatfolioPDF.create(snapshot, {
+      abilities,
+      skills,
+      mod,
+      prof,
+      sign,
+    });
+    const blob = new Blob([bytes], { type: 'application/pdf' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const filename =
+      snapshot.name
+        .replace(/[<>:"/\\|?*\x00-\x1f]/g, '')
+        .trim()
+        .slice(0, 100)
+        .replace(/[. ]+$/, '') || 'Character';
+    link.href = url;
+    link.download = `${filename}-character-sheet.pdf`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    $('#modal').close();
+    toast('Character sheet PDF downloaded.');
+  } catch (error) {
+    toast(error.message || 'Could not export the character sheet PDF.');
+  } finally {
+    button.disabled = false;
+    button.textContent = label;
+  }
+}
+
 // All dialogs share the same markup and styling.
 function modal(title, body, submit, label = 'Save') {
   const dialog = $('#modal');
@@ -2155,11 +2196,15 @@ document.addEventListener('click', async (e) => {
       modal(
         'Character options',
         /* HTML */ `<div class="option-buttons"
-          >${button('remove-portrait', 'Remove portrait', 'secondary')}${button('delete-character', 'Delete character', 'secondary danger')}</div
+          >${button('export-sheet-pdf', 'Export sheet PDF', 'secondary')}${button('remove-portrait', 'Remove portrait', 'secondary')}${button('delete-character', 'Delete character', 'secondary danger')}</div
         >`,
         () => {},
         'Done',
       );
+      break;
+
+    case 'export-sheet-pdf':
+      await exportCharacterPDF(btn);
       break;
 
     case 'duplicate': {
