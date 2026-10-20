@@ -3016,3 +3016,58 @@ dialog .form-grid {
   flex-wrap: wrap;
   gap: 12px 20px;
 }
+
+.concentration-tracker {
+  display: grid;
+  gap: var(--field-gap);
+  padding-block: var(--field-gap);
+  border-block: 1px solid var(--line);
+}
+
+#spell-results,
+.spell-filters {
+  margin-top: var(--section-gap);
+}
+
+.concentration-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.concentration-heading > span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.concentration-heading > strong {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+
+.concentration-reminder {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #6284ad;
+  border-radius: 4px;
+  background: #26374c;
+}
+
+.concentration-reminder > span {
+  flex: 1 1 160px;
+}
+
+.concentration-reminder small {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+}
+
+.concentration-actions {
+  display: flex;
+  gap: 8px;
+}

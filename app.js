@@ -360,6 +360,8 @@ function blank(name = 'New adventurer') {
     slots: Array(9).fill(0),
     usedSlots: Array(9).fill(0),
     spellNotes: '',
+    concentrationSpell: '',
+    concentrationDamage: [],
 
     equipment: [],
     coins: { cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
@@ -789,6 +791,33 @@ function abilityTiles(c) {
   >`;
 }
 
+// Keep each damage source until the player resolves its concentration save.
+function endConcentration(character) {
+  character.concentrationSpell = '';
+  character.concentrationDamage = [];
+}
+
+function concentrationTracker(character) {
+  const active = character.concentrationSpell;
+  const damage = character.concentrationDamage || [];
+  const candidates = character.spells
+    .map((spell, index) => ({ spell, index }))
+    .filter(
+      ({ spell }) => spellFlag(spell, 'concentration') && spell.name.trim(),
+    );
+  const saveBonus =
+    mod(character.abilities[2]) +
+    (character.saves.includes(2) ? prof(character) : 0);
+  const reminder =
+    active && damage.length
+      ? `<div class="concentration-reminder" role="status"><span><strong>Constitution save · DC ${Math.max(10, Math.floor(damage[0] / 2))}</strong><small>${damage[0]} damage · Save bonus ${sign(saveBonus)}${damage.length > 1 ? ` · ${damage.length} saves pending` : ''}</small></span><div class="concentration-actions">${button('concentration-pass', 'Pass', 'secondary')}${button('concentration-fail', 'Fail', 'secondary danger')}</div></div>`
+      : '';
+
+  return `<div class="concentration-tracker"><div class="concentration-heading"><span>Concentration</span><strong>${esc(active || 'None')}</strong>${active ? button('end-concentration', 'End', 'text-button') : ''}</div>
+    ${candidates.length ? `<select id="concentration-spell" aria-label="Start or switch concentration spell"><option value="">${active ? 'Switch spell…' : 'Start concentrating…'}</option>${candidates.map(({ spell, index }) => `<option value="${index}">${esc(spell.name)}${spell.level ? ` · Level ${spell.level}` : ' · Cantrip'}</option>`).join('')}</select>` : '<p class="help">Mark a spell as concentration in its editor to track it here.</p>'}
+    ${reminder}</div>`;
+}
+
 function healthControls(c) {
   return /* HTML */ `<div class="hp-display">${healthReadout(c)}</div
     ><div class="hp-track"
@@ -809,7 +838,7 @@ function healthControls(c) {
       />${button('damage', 'Damage', 'secondary')}${button('heal', 'Heal', 'secondary')}</div
     ><div class="form-grid hp-limits"
       >${field('Temporary HP', 'tempHp', 'number')}${field('Maximum HP', 'maxHp', 'number')}</div
-    >`;
+    >${concentrationTracker(c)}`;
 }
 
 function activeConditionChips(character) {
@@ -1465,7 +1494,8 @@ const views = {
         >${spellSlots(c)}${spellcastingSummary(c)}</div
       >${panel(
         'Your spells',
-        spellFilterControls(c) +
+        concentrationTracker(c) +
+          spellFilterControls(c) +
           `<div id="spell-results">${spellRecords(c)}</div>`,
         button('add-spell', '＋ Add spell', 'secondary'),
       )}${panel('Spellcasting notes', area('Rituals, pact magic & other details', 'spellNotes'))}`,
@@ -2019,6 +2049,14 @@ function validateBackup(input) {
     )
       throw Error('Invalid conditions or exhaustion level.');
 
+    if (
+      c.concentrationDamage.some(
+        (amount) => !Number.isSafeInteger(amount) || amount <= 0,
+      )
+    )
+      throw Error('Invalid concentration damage.');
+    if (!c.concentrationSpell || c.hp === 0) endConcentration(c);
+
     c.activeConditions = [...new Set(c.activeConditions)];
     c.skills = [...new Set([...c.skills, ...c.expertise])];
     c.hp = Math.min(c.hp, c.maxHp);
@@ -2479,6 +2517,19 @@ document.addEventListener('click', async (e) => {
       break;
     }
 
+    case 'end-concentration':
+    case 'concentration-fail':
+      endConcentration(c);
+      changed();
+      renderCharacter();
+      break;
+
+    case 'concentration-pass':
+      c.concentrationDamage.shift();
+      changed();
+      renderCharacter();
+      break;
+
     case 'heal':
     case 'damage': {
       const raw = $('#hp-amount').value.trim(),
@@ -2502,6 +2553,12 @@ document.addEventListener('click', async (e) => {
         const absorbed = Math.min(c.tempHp, amount);
         c.tempHp -= absorbed;
         c.hp = Math.max(0, c.hp - (amount - absorbed));
+        if (c.concentrationSpell) {
+          if (c.hp === 0) {
+            endConcentration(c);
+            toast('Concentration ended at 0 HP.');
+          } else c.concentrationDamage.push(amount);
+        }
       }
       $('#hp-amount').value = '';
       changed();
@@ -2513,11 +2570,12 @@ document.addEventListener('click', async (e) => {
     case 'rest':
       confirmAction(
         'Take a long rest?',
-        'Restore HP to maximum, clear temporary HP and death saves, and reset used spell slots. Adjust hit dice and other limited resources manually to match your table’s rules.',
+        'Restore HP to maximum, clear temporary HP and death saves, reset used spell slots, and end concentration. Adjust hit dice and other limited resources manually to match your table’s rules.',
         () => {
           c.hp = c.maxHp;
           c.tempHp = 0;
           c.usedSlots.fill(0);
+          endConcentration(c);
           c.deathSuccess = 0;
           c.deathFailure = 0;
           changed();
@@ -2825,6 +2883,21 @@ document.addEventListener('change', (e) => {
   const el = e.target,
     c = current();
   if (!c) return;
+  if (el.id === 'concentration-spell') {
+    if (el.value === '') return;
+    const spell = c.spells[Number(el.value)];
+    if (!spell || !spellFlag(spell, 'concentration')) return;
+    if (c.hp === 0) {
+      el.value = '';
+      toast('Recover hit points before starting concentration.');
+      return;
+    }
+    endConcentration(c);
+    c.concentrationSpell = spell.name.trim();
+    changed();
+    renderCharacter();
+    return;
+  }
   if (el.dataset.spellFilter) {
     spellFilters[el.dataset.spellFilter] = el.value;
     renderSpellResults(c);
@@ -2880,6 +2953,7 @@ document.addEventListener('change', (e) => {
     if (el.type === 'number') el.value = get(c, el.dataset.field);
     if (el.dataset.field === 'maxHp' && c.hp > c.maxHp) {
       c.hp = c.maxHp;
+      if (c.hp === 0) endConcentration(c);
       changed(false);
     }
     if (refreshesValues(el.dataset.field)) scheduleRefresh();

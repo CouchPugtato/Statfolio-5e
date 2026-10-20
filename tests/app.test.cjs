@@ -2257,3 +2257,160 @@ test('spell flags migrate old text, preserve explicit choices in backups, and pe
     a.close();
   }
 });
+
+test('concentration tracks one spell across pages and queues saves for each damage source including temporary HP', async () => {
+  const a = await app();
+  try {
+    const c = a.api.blank('Concentrating');
+    c.hp = c.maxHp = 100;
+    c.tempHp = 30;
+    c.abilities[2] = 16;
+    c.saves = [2];
+    c.spells = ['Bless', 'Fly'].map((name) => ({
+      name,
+      level: 1,
+      school: '',
+      time: '',
+      range: '',
+      components: '',
+      duration: '',
+      description: '',
+      prepared: true,
+      concentration: true,
+      ritual: false,
+    }));
+    a.api.use(c);
+    a.api.setPage('spells');
+    a.input('#concentration-spell', '0');
+    assert.equal(c.concentrationSpell, 'Bless');
+    assert.match(a.$('.concentration-heading').textContent, /Bless/);
+    a.api.setPage('combat');
+    a.input('#hp-amount', '9');
+    a.click('[data-action="damage"]');
+    assert.equal(c.hp, 100);
+    assert.equal(c.tempHp, 21);
+    assert.match(a.$('.concentration-reminder').textContent, /DC 10/);
+    assert.match(a.$('.concentration-reminder').textContent, /Save bonus \+5/);
+    a.input('#hp-amount', '31');
+    a.click('[data-action="damage"]');
+    assert.deepEqual(Array.from(c.concentrationDamage), [9, 31]);
+    assert.match(a.$('.concentration-reminder').textContent, /2 saves pending/);
+    a.input('#hp-amount', '3');
+    a.click('[data-action="heal"]');
+    assert.equal(c.concentrationDamage.length, 2);
+    a.click('[data-action="concentration-pass"]');
+    assert.match(a.$('.concentration-reminder').textContent, /DC 15/);
+    assert.equal(c.concentrationSpell, 'Bless');
+    a.api.setPage('overview');
+    assert.match(a.$('.concentration-reminder').textContent, /DC 15/);
+    a.click('[data-action="concentration-pass"]');
+    assert.equal(a.$('.concentration-reminder'), null);
+    assert.equal(c.concentrationSpell, 'Bless');
+    a.input('#concentration-spell', '1');
+    assert.equal(c.concentrationSpell, 'Fly');
+    a.input('#hp-amount', '22');
+    a.click('[data-action="damage"]');
+    a.click('[data-action="concentration-fail"]');
+    assert.equal(c.concentrationSpell, '');
+    assert.equal(c.concentrationDamage.length, 0);
+    assert.equal(a.$('.concentration-reminder'), null);
+    a.input('#concentration-spell', '0');
+    a.click('[data-action="end-concentration"]');
+    assert.equal(c.concentrationSpell, '');
+  } finally {
+    a.close();
+  }
+});
+
+test('concentration ends on zero HP and rest, and invalid damage never creates a save', async () => {
+  const a = await app();
+  try {
+    const c = a.api.blank('Concentration ends');
+    c.spells = [
+      {
+        name: 'Ward',
+        level: 1,
+        school: '',
+        time: '',
+        range: '',
+        components: '',
+        duration: '',
+        description: '',
+        prepared: true,
+        concentration: true,
+        ritual: false,
+      },
+    ];
+    a.api.use(c);
+    a.input('#concentration-spell', '0');
+    for (const amount of ['0', '-1', 'bad', '1.5']) {
+      a.input('#hp-amount', amount);
+      a.click('[data-action="damage"]');
+      assert.equal(c.concentrationDamage.length, 0);
+    }
+    a.input('#hp-amount', '10');
+    a.click('[data-action="damage"]');
+    assert.equal(c.hp, 0);
+    assert.equal(c.concentrationSpell, '');
+    assert.equal(a.$('.concentration-reminder'), null);
+    a.input('#concentration-spell', '0');
+    assert.equal(c.concentrationSpell, '');
+    a.input('#hp-amount', '10');
+    a.click('[data-action="heal"]');
+    a.input('#concentration-spell', '0');
+    a.api.setPage('combat');
+    a.input('#hp-amount', '1');
+    a.click('[data-action="damage"]');
+    a.click('[data-action="rest"]');
+    await a.submit();
+    assert.equal(c.concentrationSpell, '');
+    assert.equal(c.concentrationDamage.length, 0);
+  } finally {
+    a.close();
+  }
+});
+
+test('concentration and pending saves persist, survive backups, and stay with each character', async () => {
+  const a = await app();
+  let reopened;
+  try {
+    const c = a.api.blank('Saved concentration');
+    c.concentrationSpell = '<Ward>';
+    c.concentrationDamage = [23, 5];
+    a.api.use(c);
+    assert.equal(a.$('.concentration-heading strong').textContent, '<Ward>');
+    assert.equal(a.$('.concentration-heading ward'), null);
+    const backup = (character) => ({
+      format: 'statfolio',
+      version: 1,
+      characters: [character],
+    });
+    const clean = a.api.validateBackup(backup(c))[0];
+    assert.equal(clean.concentrationSpell, '<Ward>');
+    assert.deepEqual(Array.from(clean.concentrationDamage), [23, 5]);
+    const legacy = structuredClone(c);
+    delete legacy.concentrationSpell;
+    delete legacy.concentrationDamage;
+    assert.equal(
+      a.api.validateBackup(backup(legacy))[0].concentrationSpell,
+      '',
+    );
+    for (const value of [[0], [-2], ['10'], [1.5]]) {
+      assert.throws(
+        () =>
+          a.api.validateBackup(backup({ ...c, concentrationDamage: value })),
+        /Invalid concentration damage/,
+      );
+    }
+    await a.api.persist();
+    reopened = await app(a.storage);
+    assert.equal(reopened.api.current.concentrationSpell, '<Ward>');
+    assert.match(reopened.$('.concentration-reminder').textContent, /DC 11/);
+    a.api.use(a.api.blank('Other'));
+    assert.equal(a.$('.concentration-reminder'), null);
+    assert.equal(c.concentrationDamage.length, 2);
+  } finally {
+    reopened?.close();
+    a.close();
+  }
+});
