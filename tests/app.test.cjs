@@ -2414,3 +2414,162 @@ test('concentration and pending saves persist, survive backups, and stay with ea
     a.close();
   }
 });
+
+test('bundled spell reference has complete unique entries and SRD spell flags', () => {
+  const reference = JSON.parse(
+    fs.readFileSync('assets/reference/spells.json', 'utf8'),
+  );
+  assert.equal(reference.length, 319);
+  assert.equal(
+    new Set(reference.map((spell) => spell.id)).size,
+    reference.length,
+  );
+  for (const spell of reference) {
+    assert.ok(
+      Number.isInteger(spell.level) && spell.level >= 0 && spell.level <= 9,
+    );
+    for (const field of [
+      'id',
+      'name',
+      'school',
+      'time',
+      'range',
+      'components',
+      'duration',
+      'description',
+    ])
+      assert.equal(typeof spell[field], 'string');
+    assert.equal(typeof spell.concentration, 'boolean');
+    assert.equal(typeof spell.ritual, 'boolean');
+    assert.ok(spell.description.length > 0);
+  }
+  const detect = reference.find((spell) => spell.id === 'detect-magic');
+  assert.equal(detect.concentration, true);
+  assert.equal(detect.ritual, true);
+  const fireball = reference.find((spell) => spell.id === 'fireball');
+  assert.match(fireball.components, /bat guano/);
+  assert.match(fireball.description, /At higher levels/);
+});
+
+test('spell reference searches, previews, and imports editable independent copies with every spell detail', async () => {
+  const a = await app();
+  let reopened;
+  try {
+    const reference = JSON.parse(
+      fs.readFileSync('assets/reference/spells.json', 'utf8'),
+    );
+    const requests = [];
+    a.w.fetch = async (url) => {
+      requests.push(String(url));
+      return { ok: true, json: async () => structuredClone(reference) };
+    };
+    const c = a.api.blank('Import spells');
+    a.api.use(c);
+    a.api.setPage('spells');
+    a.click('[data-action="import-spell"]');
+    await settle();
+    assert.deepEqual(requests, [
+      'https://example.test/Statfolio-5e/assets/reference/spells.json',
+    ]);
+    assert.equal(a.$('#modal').open, true);
+    assert.equal(a.$('#modal button[type="submit"]').disabled, true);
+    assert.equal(a.$('#spell-reference-search'), a.w.document.activeElement);
+    a.input('#spell-reference-search', '  FIREBALL ');
+    assert.equal(
+      a.w.document.querySelectorAll('.spell-reference-choice').length,
+      2,
+    );
+    a.input('#spell-reference-level', 0);
+    assert.match(
+      a.$('#spell-reference-results').textContent,
+      /No matching spells/,
+    );
+    a.input('#spell-reference-level', 3);
+    a.click('[data-reference-id="fireball"]');
+    assert.match(a.$('#spell-reference-preview').textContent, /8d6/);
+    assert.match(a.$('#spell-reference-preview').textContent, /bat guano/);
+    assert.match(
+      a.$('#spell-reference-preview').textContent,
+      /At higher levels/,
+    );
+    assert.equal(c.spells.length, 0);
+    assert.equal(a.$('#modal button[type="submit"]').disabled, false);
+    a.$('#spell-reference-search').dispatchEvent(
+      new a.w.KeyboardEvent('keydown', {
+        key: 'Enter',
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    assert.equal(c.spells.length, 0);
+    await a.submit();
+    const { id, ...expected } = reference.find(
+      (spell) => spell.id === 'fireball',
+    );
+    assert.deepEqual(JSON.parse(JSON.stringify(c.spells[0])), {
+      ...expected,
+      prepared: false,
+    });
+    assert.equal(a.$('[data-field="spells.0.name"]').value, 'Fireball');
+    a.input('[data-field="spells.0.name"]', 'Custom fireball');
+    a.click('[data-action="finish-spell"]');
+    a.click('[data-action="import-spell"]');
+    await settle();
+    a.input('#spell-reference-search', 'detect magic');
+    a.click('[data-reference-id="detect-magic"]');
+    await a.submit();
+    assert.equal(c.spells[1].concentration, true);
+    assert.equal(c.spells[1].ritual, true);
+    assert.equal(c.spells[0].name, 'Custom fireball');
+    assert.equal(requests.length, 1);
+    await a.api.persist();
+    reopened = await app(a.storage);
+    assert.equal(
+      reopened.api.current.spells[0].description,
+      expected.description,
+    );
+    assert.equal(reopened.api.current.spells[1].concentration, true);
+    assert.equal(reopened.api.current.spells[1].ritual, true);
+  } finally {
+    reopened?.close();
+    a.close();
+  }
+});
+
+test('spell reference cancellation and failed loads preserve character data and allow retry', async () => {
+  const a = await app();
+  try {
+    const c = a.api.blank('Safe import');
+    a.api.use(c);
+    a.api.setPage('spells');
+    const before = JSON.stringify(c);
+    let requests = 0;
+    a.w.fetch = async () => {
+      requests++;
+      if (requests === 1) return { ok: false };
+      return {
+        ok: true,
+        json: async () =>
+          JSON.parse(fs.readFileSync('assets/reference/spells.json', 'utf8')),
+      };
+    };
+    a.click('[data-action="import-spell"]');
+    await settle();
+    assert.equal(a.$('[data-action="import-spell"]').disabled, false);
+    assert.equal(a.$('#modal').open, false);
+    assert.equal(JSON.stringify(c), before);
+    a.click('[data-action="import-spell"]');
+    await settle();
+    assert.equal(requests, 2);
+    a.click('[data-reference-id="fireball"]');
+    a.click('[data-action="close-modal"]');
+    assert.equal(JSON.stringify(c), before);
+    a.click('[data-action="import-spell"]');
+    await settle();
+    assert.equal(requests, 2);
+    assert.equal(a.$('#spell-reference-id').value, '');
+    assert.equal(a.$('#modal button[type="submit"]').disabled, true);
+  } finally {
+    a.close();
+  }
+});

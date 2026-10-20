@@ -1240,7 +1240,10 @@ function undoDeletedEntry(event) {
 }
 
 document.addEventListener('keydown', (event) => {
-  if (event.key === 'Enter' && event.target.id === 'related-notes-search') {
+  if (
+    event.key === 'Enter' &&
+    ['related-notes-search', 'spell-reference-search'].includes(event.target.id)
+  ) {
     event.preventDefault();
     return;
   }
@@ -1273,6 +1276,158 @@ document.addEventListener(
   },
   true,
 );
+
+// The licensed reference is bundled with the site and loaded only when requested.
+let spellReferencePromise;
+let spellReference = [];
+
+async function loadSpellReference() {
+  if (!spellReferencePromise) {
+    spellReferencePromise = (async () => {
+      const response = await fetch(
+        new URL('./assets/reference/spells.json', document.baseURI),
+      );
+      if (!response.ok)
+        throw Error('Could not load the spell reference. Please try again.');
+      spellReference = await response.json();
+      return spellReference;
+    })().catch((error) => {
+      spellReferencePromise = null;
+      throw error;
+    });
+  }
+  return spellReferencePromise;
+}
+
+function renderSpellReferenceResults() {
+  const query = $('#spell-reference-search').value.trim().toLocaleLowerCase();
+  const level = $('#spell-reference-level').value;
+  const selected = $('#spell-reference-id').value;
+  const matches = spellReference.filter(
+    (spell) =>
+      spell.name.toLocaleLowerCase().includes(query) &&
+      (level === '' || spell.level === Number(level)),
+  );
+
+  $('#spell-reference-results').innerHTML =
+    matches
+      .map(
+        (spell) =>
+          /* HTML */ `<button
+            type="button"
+            class="spell-reference-choice"
+            data-action="preview-reference-spell"
+            data-reference-id="${esc(spell.id)}"
+            aria-pressed="${spell.id === selected}"
+            ><strong>${esc(spell.name)}</strong
+            ><small
+              >${spell.level ? `Level ${spell.level}` : 'Cantrip'} ·
+              ${esc(spell.school)}${spell.concentration ? ' · Concentration' : ''}${spell.ritual ? ' · Ritual' : ''}</small
+            ></button
+          >`,
+      )
+      .join('') || '<p class="muted" role="status">No matching spells.</p>';
+  $('#spell-reference-count').textContent = `${matches.length} spells`;
+}
+
+function previewReferenceSpell(id) {
+  const spell = spellReference.find((entry) => entry.id === id);
+  if (!spell) return;
+  $('#spell-reference-id').value = id;
+  $('#spell-reference-preview').innerHTML = /* HTML */ `<h3
+      >${esc(spell.name)}</h3
+    ><dl
+      >${[
+        ['Casting time', spell.time],
+        ['Range', spell.range],
+        ['Components', spell.components],
+        ['Duration', spell.duration],
+      ]
+        .map(
+          ([label, value]) =>
+            `<div><dt>${label}</dt><dd>${esc(value)}</dd></div>`,
+        )
+        .join('')}</dl
+    ><div class="spell-reference-description">${esc(spell.description)}</div>`;
+  $('#modal button[type="submit"]').disabled = false;
+  for (const choice of document.querySelectorAll('.spell-reference-choice')) {
+    choice.setAttribute(
+      'aria-pressed',
+      String(choice.dataset.referenceId === id),
+    );
+  }
+}
+
+async function importSpellModal(character, trigger) {
+  const label = trigger.textContent;
+  trigger.disabled = true;
+  trigger.textContent = 'Loading…';
+  try {
+    await loadSpellReference();
+    if (current() !== character || page !== 'spells') return;
+    modal(
+      'Import spell',
+      /* HTML */ `<div class="spell-reference"
+        ><p class="help"
+          >SRD 5.1 · 2014 rules. Preview a spell, then import an editable copy.
+          <a href="./RULES-LICENSE.md" target="_blank" rel="noopener"
+            >Source & license</a
+          ></p
+        ><input type="hidden" name="reference-id" id="spell-reference-id" /><div
+          class="spell-reference-filters"
+          ><input
+            type="search"
+            id="spell-reference-search"
+            aria-label="Search spell reference by name"
+            placeholder="Search spells…" /><select
+            id="spell-reference-level"
+            aria-label="Filter reference by level"
+            ><option value="">All levels</option
+            >${Array.from({ length: 10 }, (_, level) => `<option value="${level}">${level ? `Level ${level}` : 'Cantrip'}</option>`).join('')}</select
+          ><small id="spell-reference-count" role="status"></small></div
+        ><div class="spell-reference-layout"
+          ><div
+            id="spell-reference-results"
+            aria-label="Spell reference results"
+          ></div
+          ><section
+            id="spell-reference-preview"
+            tabindex="0"
+            aria-label="Selected spell preview"
+            ><p class="muted"
+              >Select a spell to preview its details.</p
+            ></section
+          ></div
+        ></div
+      >`,
+      (data) => {
+        const reference = spellReference.find(
+          (spell) => spell.id === data.get('reference-id'),
+        );
+        if (!reference) throw Error('Choose a spell to import.');
+        const { id, ...fields } = reference;
+        const spell = { ...fields, prepared: false };
+        character.spells.push(spell);
+        editingSpell = spell;
+        changed();
+        renderCharacter();
+        $('[data-spell-editor] input')?.focus();
+        toast(`${spell.name} imported.`);
+      },
+      'Import spell',
+    );
+    $('#modal button[type="submit"]').disabled = true;
+    renderSpellReferenceResults();
+    $('#spell-reference-search').focus();
+  } catch (error) {
+    toast(
+      error.message || 'Could not load the spell reference. Please try again.',
+    );
+  } finally {
+    trigger.disabled = false;
+    trigger.textContent = label;
+  }
+}
 
 function spellRecords(c) {
   if (!c.spells.length)
@@ -1497,7 +1652,7 @@ const views = {
       >${panel(
         'Your spells',
         `<div id="spell-results">${spellRecords(c)}</div>`,
-        button('add-spell', '＋ Add spell', 'secondary'),
+        `<div class="spellbook-actions">${button('import-spell', 'Import spell', 'secondary')}${button('add-spell', '＋ Add spell', 'secondary')}</div>`,
       )}${panel('Spellcasting notes', area('Rituals, pact magic & other details', 'spellNotes'))}`,
   equipment: (c) =>
     `${panel(
@@ -2427,6 +2582,14 @@ document.addEventListener('click', async (e) => {
       $('[data-spell-filter="name"]')?.focus();
       break;
 
+    case 'import-spell':
+      await importSpellModal(c, btn);
+      break;
+
+    case 'preview-reference-spell':
+      previewReferenceSpell(btn.dataset.referenceId);
+      break;
+
     case 'add-spell':
       c.spells.push({
         name: '',
@@ -2774,6 +2937,10 @@ document.addEventListener('input', (e) => {
     return;
   }
   if (!c) return;
+  if (el.id === 'spell-reference-search' || el.id === 'spell-reference-level') {
+    renderSpellReferenceResults();
+    return;
+  }
   if (el.id === 'condition-search') {
     filterConditions(el.value);
     return;
@@ -2883,6 +3050,10 @@ document.addEventListener('change', (e) => {
   const el = e.target,
     c = current();
   if (!c) return;
+  if (el.id === 'spell-reference-level') {
+    renderSpellReferenceResults();
+    return;
+  }
   if (el.id === 'concentration-spell') {
     if (el.value === '') return;
     const spell = c.spells[Number(el.value)];

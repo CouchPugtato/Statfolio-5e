@@ -3094,3 +3094,125 @@ dialog .form-grid {
   display: flex;
   gap: 8px;
 }
+.spellbook-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+dialog:has(.spell-reference) {
+  width: 920px;
+  max-height: calc(100dvh - 32px);
+}
+
+.spell-reference-filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: var(--field-gap);
+}
+
+.spell-reference-filters > input {
+  flex: 2 1 200px;
+  min-width: 0;
+}
+
+.spell-reference-filters > select {
+  flex: 1 1 130px;
+  width: auto;
+}
+
+.spell-reference-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr);
+  gap: var(--section-gap);
+}
+
+#spell-reference-results,
+#spell-reference-preview {
+  min-height: 0;
+  max-height: 50dvh;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+#spell-reference-results::-webkit-scrollbar,
+#spell-reference-preview::-webkit-scrollbar {
+  display: none;
+}
+
+.spell-reference-choice {
+  display: block;
+  width: 100%;
+  margin-bottom: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  text-align: left;
+}
+
+.spell-reference-choice[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: var(--accent-light);
+}
+
+.spell-reference-choice small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+}
+
+#spell-reference-preview {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--paper);
+  overflow-wrap: anywhere;
+}
+
+#spell-reference-preview h3 {
+  margin: 0 0 14px;
+  color: var(--accent);
+}
+
+#spell-reference-preview dl {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 16px;
+  font-size: 12px;
+}
+
+#spell-reference-preview dl > div {
+  display: grid;
+  grid-template-columns: 85px minmax(0, 1fr);
+  gap: 8px;
+}
+
+#spell-reference-preview dt {
+  color: var(--muted);
+}
+
+#spell-reference-preview dd {
+  margin: 0;
+}
+
+.spell-reference-description {
+  white-space: pre-wrap;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+@media (max-width: 600px) {
+  .spell-reference-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  #spell-reference-results {
+    max-height: 24dvh;
+  }
+
+  #spell-reference-preview {
+    max-height: 32dvh;
+  }
+}
