@@ -353,6 +353,7 @@ function blank(name = 'New adventurer') {
 
     attacks: [],
     resources: [],
+    combatLog: [],
     features: '',
 
     spells: [],
@@ -840,8 +841,266 @@ function concentrationTracker(character, showLabel = true) {
     ${reminder}</div>`;
 }
 
+// Combat history stores only reversible changes to a small, explicit set of fields.
+const pendingCombatEdits = new WeakMap();
+const healthLogFields = [
+  'hp',
+  'tempHp',
+  'deathSuccess',
+  'deathFailure',
+  'concentrationSpell',
+  'concentrationDamage',
+];
+
+function combatTarget(character, target) {
+  if (healthLogFields.includes(target) || target === 'hitDiceLeft')
+    return { object: character, key: target };
+  const slot = target.match(/^usedSlots\.([0-8])$/);
+  if (slot) return { object: character.usedSlots, key: Number(slot[1]) };
+  if (target.startsWith('resource:')) {
+    const resource = character.resources.find(
+      (entry) => entry.id === target.slice(9),
+    );
+    if (resource) return { object: resource, key: 'remaining' };
+  }
+  return null;
+}
+
+function combatSnapshot(character, targets = healthLogFields) {
+  return targets.map((target) => {
+    const location = combatTarget(character, target);
+    return { target, before: structuredClone(location.object[location.key]) };
+  });
+}
+
+function recordCombatEvent(character, label, snapshot) {
+  const changes = snapshot
+    .map(({ target, before }) => {
+      const location = combatTarget(character, target);
+      return {
+        target,
+        before,
+        after: structuredClone(location.object[location.key]),
+      };
+    })
+    .filter(
+      ({ before, after }) => JSON.stringify(before) !== JSON.stringify(after),
+    );
+  if (!changes.length) return;
+  character.combatLog.unshift({
+    id: uid(),
+    at: new Date().toISOString(),
+    label,
+    changes,
+    undone: false,
+  });
+  character.combatLog.length = Math.min(character.combatLog.length, 100);
+}
+
+function combatUndoReason(character, entry) {
+  if (entry.undone) return 'Already undone.';
+  if (character.combatLog.find((item) => !item.undone) !== entry)
+    return 'Undo newer entries first.';
+  for (const change of entry.changes) {
+    const location = combatTarget(character, change.target);
+    if (
+      !location ||
+      JSON.stringify(location.object[location.key]) !==
+        JSON.stringify(change.after)
+    )
+      return 'Values have changed since this entry.';
+    if (change.target === 'hp' && change.before > character.maxHp)
+      return 'Previous HP exceeds the current maximum.';
+    if (
+      change.target === 'concentrationSpell' &&
+      change.before &&
+      character.hp === 0 &&
+      !entry.changes.some((item) => item.target === 'hp' && item.before > 0)
+    )
+      return 'Concentration cannot resume at 0 HP.';
+  }
+  return '';
+}
+
+function combatChangeText(change) {
+  const labels = {
+    hp: 'HP',
+    tempHp: 'Temp HP',
+    deathSuccess: 'Death saves passed',
+    deathFailure: 'Death saves failed',
+    concentrationSpell: 'Concentration',
+    concentrationDamage: 'Pending saves',
+    hitDiceLeft: 'Hit dice',
+  };
+  const label =
+    labels[change.target] ||
+    (change.target.startsWith('usedSlots.')
+      ? `Level ${Number(change.target.split('.')[1]) + 1} slots used`
+      : 'Remaining');
+  const value = (item) =>
+    Array.isArray(item)
+      ? String(item.length)
+      : String(item || (typeof item === 'string' ? 'None' : 0));
+  return `${label}: ${value(change.before)} → ${value(change.after)}`;
+}
+
+function combatLogEntries(character) {
+  if (!character.combatLog.length)
+    return '<p class="muted">No combat activity yet. Damage, healing, hit dice, spell slots, and resource changes will appear here.</p>';
+  return character.combatLog
+    .map((entry) => {
+      const reason = combatUndoReason(character, entry);
+      const date = new Date(entry.at);
+      return /* HTML */ `<article
+        class="combat-log-entry ${entry.undone ? 'is-undone' : ''}"
+        ><div class="combat-log-entry-heading"
+          ><strong>${esc(entry.label)}</strong
+          ><time
+            datetime="${esc(entry.at)}"
+            title="${esc(date.toLocaleString())}"
+            >${esc(date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))}</time
+          ></div
+        ><div class="combat-log-entry-details"
+          >${entry.changes.map((change) => `<span>${esc(combatChangeText(change))}</span>`).join('')}</div
+        ><div class="combat-log-entry-actions"
+          >${entry.undone ? '<span class="muted">Undone</span>' : button('undo-combat-event', 'Undo', 'secondary', `data-entry-id="${entry.id}" ${reason ? `disabled title="${esc(reason)}"` : ''}`)}</div
+        ></article
+      >`;
+    })
+    .join('');
+}
+
+function openCombatLog(character) {
+  modal(
+    'Combat log',
+    /* HTML */ `<p class="help"
+        >Latest 100 entries · Undo newest first. Later edits to affected values
+        can prevent undo.</p
+      ><div class="combat-log" tabindex="0" aria-label="Recent combat activity"
+        >${combatLogEntries(character)}</div
+      >`,
+    () => {},
+    'Done',
+  );
+}
+
+function trackCombatFieldInput(character, element) {
+  if (pendingCombatEdits.has(element)) return;
+  const path = element.dataset.field;
+  let target;
+  let label;
+  const resourceMatch = path.match(/^resources\.(\d+)\.remaining$/);
+  if (resourceMatch) {
+    const resource = character.resources[Number(resourceMatch[1])];
+    resource.id ||= uid();
+    target = `resource:${resource.id}`;
+    label = resource.name.trim() || 'Resource';
+  } else if (/^usedSlots\.[0-8]$/.test(path)) {
+    target = path;
+    label = `Level ${Number(path.split('.')[1]) + 1} spell slots`;
+  } else if (path === 'hitDiceLeft') {
+    target = path;
+    label = 'Hit dice';
+  } else return;
+  pendingCombatEdits.set(element, {
+    character,
+    label,
+    snapshot: combatSnapshot(character, [target]),
+  });
+}
+
+// Treat all input events before blur as one resource change.
+function commitCombatField(element) {
+  const pending = pendingCombatEdits.get(element);
+  if (!pending) return;
+  pendingCombatEdits.delete(element);
+  const { character, label, snapshot } = pending;
+  const location = combatTarget(character, snapshot[0].target);
+  if (!location) return;
+  const delta = location.object[location.key] - snapshot[0].before;
+  const slots = snapshot[0].target.startsWith('usedSlots.');
+  const spent = slots ? delta > 0 : delta < 0;
+  recordCombatEvent(
+    character,
+    `${label}: ${spent ? 'spent' : 'restored'} ${Math.abs(delta)}`,
+    snapshot,
+  );
+}
+
+function validCombatValue(target, value) {
+  if (target === 'concentrationSpell') return typeof value === 'string';
+  if (target === 'concentrationDamage')
+    return (
+      Array.isArray(value) &&
+      value.every((amount) => Number.isSafeInteger(amount) && amount > 0)
+    );
+  if (
+    !['hp', 'tempHp', 'hitDiceLeft', 'deathSuccess', 'deathFailure'].includes(
+      target,
+    ) &&
+    !/^usedSlots\.[0-8]$/.test(target) &&
+    !/^resource:[a-zA-Z0-9_-]{1,100}$/.test(target)
+  )
+    return false;
+  const max = target.startsWith('usedSlots.')
+    ? 20
+    : ['deathSuccess', 'deathFailure'].includes(target)
+      ? 3
+      : Number.MAX_SAFE_INTEGER;
+  return Number.isSafeInteger(value) && value >= 0 && value <= max;
+}
+
+function validateCombatLog(entries) {
+  const ids = new Set();
+  if (entries.length > 100) throw Error('Invalid combat log.');
+  return entries.map((entry) => {
+    if (
+      !entry ||
+      typeof entry !== 'object' ||
+      typeof entry.id !== 'string' ||
+      !/^[a-zA-Z0-9_-]{1,100}$/.test(entry.id) ||
+      ids.has(entry.id) ||
+      typeof entry.at !== 'string' ||
+      !Number.isFinite(Date.parse(entry.at)) ||
+      typeof entry.label !== 'string' ||
+      typeof entry.undone !== 'boolean' ||
+      !Array.isArray(entry.changes) ||
+      !entry.changes.length ||
+      entry.changes.length > 20
+    )
+      throw Error('Invalid combat log entry.');
+    ids.add(entry.id);
+    const targets = new Set();
+    const changes = entry.changes.map((change) => {
+      if (
+        !change ||
+        typeof change.target !== 'string' ||
+        targets.has(change.target) ||
+        !validCombatValue(change.target, change.before) ||
+        !validCombatValue(change.target, change.after)
+      )
+        throw Error('Invalid combat log change.');
+      targets.add(change.target);
+      return {
+        target: change.target,
+        before: structuredClone(change.before),
+        after: structuredClone(change.after),
+      };
+    });
+    return {
+      id: entry.id,
+      at: entry.at,
+      label: entry.label,
+      undone: entry.undone,
+      changes,
+    };
+  });
+}
+
 function healthControls(c) {
-  return /* HTML */ `<div class="hp-display">${healthReadout(c)}</div
+  return /* HTML */ `<div class="health-heading"
+      ><div class="hp-display">${healthReadout(c)}</div
+      >${button('combat-log', 'Combat log', 'secondary compact-button')}</div
     ><div class="hp-track"
       ><i
         style="width:${c.maxHp > 0 ? Math.min(100, Math.max(0, (healthTotal(c) / c.maxHp) * 100)) : 0}%"
@@ -1761,7 +2020,7 @@ const views = {
       >${panel(
         'Your spells',
         `<div id="spell-results">${spellRecords(c)}</div>`,
-        `<div class="spellbook-actions">${button('import-spell', 'Import spell', 'secondary')}${button('add-spell', '＋ Add spell', 'secondary')}</div>`,
+        `<div class="spellbook-actions">${button('combat-log', 'Combat log', 'secondary')}${button('import-spell', 'Import spell', 'secondary')}${button('add-spell', '＋ Add spell', 'secondary')}</div>`,
       )}${panel('Spellcasting notes', area('Rituals, pact magic & other details', 'spellNotes'))}`,
   equipment: (c) =>
     `${panel(
@@ -2321,6 +2580,7 @@ function validateBackup(input) {
       throw Error('Invalid concentration damage.');
     if (!c.concentrationSpell || c.hp === 0) endConcentration(c);
 
+    c.combatLog = validateCombatLog(c.combatLog);
     c.activeConditions = [...new Set(c.activeConditions)];
     c.skills = [...new Set([...c.skills, ...c.expertise])];
     c.hp = Math.min(c.hp, c.maxHp);
@@ -2361,6 +2621,7 @@ function validateBackup(input) {
     };
     for (const [key, schema] of Object.entries(schemas)) {
       const noteIds = new Set();
+      const resourceIds = new Set();
       c[key] = c[key].map((item) => {
         if (!item || typeof item !== 'object')
           throw Error(`Invalid ${key} entry.`);
@@ -2372,6 +2633,16 @@ function validateBackup(input) {
           )
             throw Error(`Invalid ${key} entry.`);
           clean[k] = item[k];
+        }
+        if (key === 'resources' && item.id !== undefined) {
+          if (
+            typeof item.id !== 'string' ||
+            !/^[a-zA-Z0-9_-]{1,100}$/.test(item.id) ||
+            resourceIds.has(item.id)
+          )
+            throw Error('Invalid resource ID.');
+          resourceIds.add(item.id);
+          clean.id = item.id;
         }
         if (key === 'attacks' || key === 'spells') {
           if (item.actionType !== undefined) {
@@ -2805,6 +3076,28 @@ document.addEventListener('click', async (e) => {
       break;
     }
 
+    case 'combat-log':
+      openCombatLog(c);
+      break;
+
+    case 'undo-combat-event': {
+      const entry = c.combatLog.find((item) => item.id === btn.dataset.entryId);
+      if (!entry || combatUndoReason(c, entry)) break;
+      for (const change of entry.changes) {
+        const location = combatTarget(c, change.target);
+        location.object[location.key] = structuredClone(change.before);
+      }
+      entry.undone = true;
+      changed();
+      renderCharacter();
+      const list = $('.combat-log');
+      const scroll = list.scrollTop;
+      list.innerHTML = combatLogEntries(c);
+      list.scrollTop = scroll;
+      toast('Combat change undone.');
+      break;
+    }
+
     case 'start-concentration':
       startConcentration(c, Number(btn.dataset.index));
       break;
@@ -2834,6 +3127,7 @@ document.addEventListener('click', async (e) => {
         toast('Enter a positive whole-number amount.');
         break;
       }
+      const before = combatSnapshot(c);
       if (action === 'heal') {
         const regained = Math.min(amount, Math.max(0, c.maxHp - c.hp));
         c.hp += regained;
@@ -2852,6 +3146,11 @@ document.addEventListener('click', async (e) => {
           } else c.concentrationDamage.push(amount);
         }
       }
+      recordCombatEvent(
+        c,
+        `${action === 'heal' ? 'Healing' : 'Damage'}: ${amount}`,
+        before,
+      );
       $('#hp-amount').value = '';
       changed();
       renderCharacter();
@@ -2864,12 +3163,17 @@ document.addEventListener('click', async (e) => {
         'Take a long rest?',
         'Restore HP to maximum, clear temporary HP and death saves, reset used spell slots, and end concentration. Adjust hit dice and other limited resources manually to match your table’s rules.',
         () => {
+          const before = combatSnapshot(c, [
+            ...healthLogFields,
+            ...c.usedSlots.map((_, index) => `usedSlots.${index}`),
+          ]);
           c.hp = c.maxHp;
           c.tempHp = 0;
           c.usedSlots.fill(0);
           endConcentration(c);
           c.deathSuccess = 0;
           c.deathFailure = 0;
+          recordCombatEvent(c, 'Long rest', before);
           changed();
           renderCharacter();
         },
@@ -3124,6 +3428,7 @@ document.addEventListener('input', (e) => {
         if (el.step !== 'any') value = Math.round(value);
       }
     }
+    trackCombatFieldInput(c, el);
     set(c, el.dataset.field, value);
     const timingField = el.dataset.field.match(/^spells\.(\d+)\.time$/);
     if (timingField) {
@@ -3213,6 +3518,7 @@ document.addEventListener('change', (e) => {
     $('#active-conditions').innerHTML = activeConditionChips(c);
     return;
   }
+  commitCombatField(el);
   if (pendingBackupEdits.has(el)) {
     pendingBackupEdits.delete(el);
     recordBackupChange();

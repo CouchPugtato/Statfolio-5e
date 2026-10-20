@@ -2811,3 +2811,263 @@ test('concentrate buttons work from both spell lists without opening editors or 
     a.close();
   }
 });
+
+test('combat log opens without edits, records actual health changes, and undoes newest first including concentration and death saves', async () => {
+  const a = await app();
+  try {
+    const c = a.api.blank('Combat history');
+    c.tempHp = 5;
+    c.concentrationSpell = 'Ward';
+    a.api.use(c);
+    a.api.setPage('combat');
+    const initial = JSON.stringify(c);
+    a.click('[data-action="combat-log"]');
+    assert.equal(a.$('#modal').open, true);
+    assert.match(a.$('.combat-log').textContent, /No combat activity/);
+    assert.equal(JSON.stringify(c), initial);
+    a.click('[data-action="close-modal"]');
+    a.input('#hp-amount', '3');
+    a.click('[data-action="damage"]');
+    assert.equal(c.combatLog.length, 1);
+    assert.equal(c.hp, 10);
+    assert.equal(c.tempHp, 2);
+    a.input('#hp-amount', '12');
+    a.click('[data-action="damage"]');
+    assert.equal(c.hp, 0);
+    assert.equal(c.concentrationSpell, '');
+    a.input('#hp-amount', '100');
+    a.click('[data-action="heal"]');
+    assert.equal(c.combatLog.length, 3);
+    assert.equal(c.hp, 10);
+    a.input('#hp-amount', '100');
+    a.click('[data-action="heal"]');
+    a.input('#hp-amount', '-3');
+    a.click('[data-action="damage"]');
+    assert.equal(c.combatLog.length, 3);
+    a.click('[data-action="combat-log"]');
+    const undo = () =>
+      a.click('.combat-log [data-action="undo-combat-event"]:not(:disabled)');
+    assert.equal(
+      a.w.document.querySelectorAll(
+        '.combat-log [data-action="undo-combat-event"]:not(:disabled)',
+      ).length,
+      1,
+    );
+    assert.match(a.$('.combat-log-entry').textContent, /Healing: 100/);
+    undo();
+    assert.equal(c.hp, 0);
+    assert.equal(a.$('#modal').open, true);
+    undo();
+    assert.equal(c.hp, 10);
+    assert.equal(c.tempHp, 2);
+    assert.equal(c.concentrationSpell, 'Ward');
+    assert.deepEqual(Array.from(c.concentrationDamage), [3]);
+    undo();
+    assert.equal(c.tempHp, 5);
+    assert.equal(c.concentrationDamage.length, 0);
+    assert.equal(
+      a.w.document.querySelectorAll('.combat-log-entry.is-undone').length,
+      3,
+    );
+    assert.equal(a.$('.combat-log [data-action="undo-combat-event"]'), null);
+    a.click('[data-action="close-modal"]');
+    c.hp = 0;
+    c.deathSuccess = 1;
+    c.deathFailure = 2;
+    a.input('#hp-amount', '4');
+    a.click('[data-action="heal"]');
+    assert.equal(c.deathFailure, 0);
+    a.click('[data-action="combat-log"]');
+    undo();
+    assert.equal(c.hp, 0);
+    assert.equal(c.deathSuccess, 1);
+    assert.equal(c.deathFailure, 2);
+  } finally {
+    a.close();
+  }
+});
+
+test('combat resource history groups typing, follows resource identity, and includes slots, hit dice, and rest', async () => {
+  const a = await app();
+  try {
+    const c = a.api.blank('Resource history');
+    c.resources = [
+      { name: 'Ki <points>', remaining: 12, max: 12 },
+      { name: 'Other', remaining: 2, max: 2 },
+    ];
+    c.hitDiceLeft = 3;
+    c.slots[0] = 3;
+    a.api.use(c);
+    a.api.setPage('combat');
+    a.input('[data-field="resources.0.remaining"]', 1, false);
+    a.input('[data-field="resources.0.remaining"]', 10, false);
+    assert.equal(c.combatLog.length, 0);
+    a.$('[data-field="resources.0.remaining"]').dispatchEvent(
+      new a.w.Event('change', { bubbles: true }),
+    );
+    assert.equal(c.combatLog.length, 1);
+    assert.equal(c.combatLog[0].label, 'Ki <points>: spent 2');
+    const id = c.resources[0].id;
+    c.resources.reverse();
+    a.click('[data-action="combat-log"]');
+    assert.equal(a.$('.combat-log points'), null);
+    a.click('.combat-log [data-action="undo-combat-event"]:not(:disabled)');
+    assert.equal(
+      c.resources.find((resource) => resource.id === id).remaining,
+      12,
+    );
+    assert.equal(c.resources[0].remaining, 2);
+    a.click('[data-action="close-modal"]');
+    a.input('[data-field="hitDiceLeft"]', 2);
+    a.api.setPage('spells');
+    a.input('[data-field="usedSlots.0"]', 1);
+    assert.match(c.combatLog[0].label, /spell slots: spent 1/);
+    a.click('[data-action="combat-log"]');
+    a.click('.combat-log [data-action="undo-combat-event"]:not(:disabled)');
+    assert.equal(c.usedSlots[0], 0);
+    a.click('.combat-log [data-action="undo-combat-event"]:not(:disabled)');
+    assert.equal(c.hitDiceLeft, 3);
+    a.click('[data-action="close-modal"]');
+    a.api.setPage('combat');
+    a.input('#hp-amount', 4);
+    a.click('[data-action="damage"]');
+    a.api.setPage('spells');
+    a.input('[data-field="usedSlots.0"]', 2);
+    a.api.setPage('combat');
+    a.click('[data-action="rest"]');
+    await a.submit();
+    assert.equal(c.combatLog[0].label, 'Long rest');
+    assert.equal(c.hp, 10);
+    assert.equal(c.usedSlots[0], 0);
+    a.click('[data-action="combat-log"]');
+    a.click('.combat-log [data-action="undo-combat-event"]:not(:disabled)');
+    assert.equal(c.hp, 6);
+    assert.equal(c.usedSlots[0], 2);
+  } finally {
+    a.close();
+  }
+});
+
+test('combat history blocks undo over later manual edits, reduced maximum HP, or deleted resources', async () => {
+  const a = await app();
+  try {
+    const c = a.api.blank('Safe undo');
+    a.api.use(c);
+    a.input('#hp-amount', 4);
+    a.click('[data-action="damage"]');
+    a.input('[data-field="maxHp"]', 8);
+    await settle();
+    a.click('[data-action="combat-log"]');
+    let undo = a.$('.combat-log [data-action="undo-combat-event"]');
+    assert.equal(undo.disabled, true);
+    assert.match(undo.title, /current maximum/);
+    a.click('[data-action="close-modal"]');
+    c.maxHp = 10;
+    c.hp = 5;
+    a.click('[data-action="combat-log"]');
+    undo = a.$('.combat-log [data-action="undo-combat-event"]');
+    assert.equal(undo.disabled, true);
+    assert.match(undo.title, /Values have changed/);
+    a.click('[data-action="close-modal"]');
+    c.resources = [{ name: 'Charge', remaining: 3, max: 3 }];
+    a.api.setPage('combat');
+    a.input('[data-field="resources.0.remaining"]', 2);
+    c.resources = [];
+    a.click('[data-action="combat-log"]');
+    assert.equal(
+      a.$('.combat-log [data-action="undo-combat-event"]').disabled,
+      true,
+    );
+  } finally {
+    a.close();
+  }
+});
+
+test('combat history survives save and backup restore with strict change validation and independent characters', async () => {
+  const a = await app();
+  let reopened;
+  try {
+    const c = a.api.blank('Persistent log');
+    c.resources = [{ name: 'Charges', remaining: 3, max: 3 }];
+    a.api.use(c);
+    a.api.setPage('combat');
+    a.input('[data-field="resources.0.remaining"]', 2);
+    a.input('#hp-amount', 1);
+    a.click('[data-action="damage"]');
+    await a.api.persist();
+    reopened = await app(a.storage);
+    assert.equal(reopened.api.current.combatLog.length, 2);
+    reopened.click('[data-action="combat-log"]');
+    reopened.click(
+      '.combat-log [data-action="undo-combat-event"]:not(:disabled)',
+    );
+    assert.equal(reopened.api.current.hp, 10);
+    reopened.click(
+      '.combat-log [data-action="undo-combat-event"]:not(:disabled)',
+    );
+    assert.equal(reopened.api.current.resources[0].remaining, 3);
+    await a.api.exportBackup();
+    const backup = JSON.parse(await a.download().text());
+    assert.equal(backup.characters[0].combatLog.length, 2);
+    const clean = a.api.validateBackup(backup)[0];
+    assert.equal(clean.resources[0].id, c.resources[0].id);
+    const bad = structuredClone(backup);
+    bad.characters[0].combatLog[0].changes[0].target = '__proto__.polluted';
+    assert.throws(() => a.api.validateBackup(bad), /Invalid combat log change/);
+    bad.characters[0].combatLog[0].changes[0] = {
+      target: 'hp',
+      before: -1,
+      after: 2,
+    };
+    assert.throws(() => a.api.validateBackup(bad), /Invalid combat log change/);
+    const legacy = structuredClone(c);
+    delete legacy.combatLog;
+    assert.equal(
+      a.api.validateBackup({
+        format: 'statfolio',
+        version: 1,
+        characters: [legacy],
+      })[0].combatLog.length,
+      0,
+    );
+    a.api.use(a.api.blank('Other character'));
+    a.click('[data-action="combat-log"]');
+    assert.match(a.$('.combat-log').textContent, /No combat activity/);
+    assert.equal(c.combatLog.length, 2);
+  } finally {
+    reopened?.close();
+    a.close();
+  }
+});
+
+test('combat log retains only the latest 100 changes and validates its entry limit', async () => {
+  const a = await app();
+  try {
+    const c = a.api.blank('Bounded history');
+    c.maxHp = c.hp = 200;
+    a.api.use(c);
+    for (let index = 0; index < 101; index++) {
+      a.input('#hp-amount', 1);
+      a.click('[data-action="damage"]');
+    }
+    assert.equal(c.hp, 99);
+    assert.equal(c.combatLog.length, 100);
+    assert.equal(
+      c.combatLog.at(-1).changes.find((change) => change.target === 'hp')
+        .before,
+      199,
+    );
+    const backup = {
+      format: 'statfolio',
+      version: 1,
+      characters: [structuredClone(c)],
+    };
+    backup.characters[0].combatLog.push({
+      ...backup.characters[0].combatLog[0],
+      id: 'extra',
+    });
+    assert.throws(() => a.api.validateBackup(backup), /Invalid combat log/);
+  } finally {
+    a.close();
+  }
+});

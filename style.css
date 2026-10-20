@@ -3277,3 +3277,94 @@ dialog:has(.spell-reference) {
 .combat-spell-summary .spell-description {
   -webkit-line-clamp: 2;
 }
+
+.health-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.compact-button,
+.combat-log-entry-actions > button {
+  min-height: 30px;
+  padding: 5px 10px;
+  font-size: 12px;
+}
+
+dialog:has(.combat-log) {
+  width: 640px;
+  max-height: calc(100dvh - 32px);
+  overflow: hidden;
+}
+
+dialog:has(.combat-log) #modal-form {
+  max-height: calc(100dvh - 94px);
+}
+
+.combat-log {
+  display: flex;
+  flex-direction: column;
+  gap: var(--field-gap);
+  min-height: 0;
+  max-height: 60dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+
+.combat-log::-webkit-scrollbar {
+  display: none;
+}
+
+.combat-log-entry {
+  flex-shrink: 0;
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--paper);
+}
+
+.combat-log-entry.is-undone {
+  opacity: 0.6;
+}
+
+.combat-log-entry-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px 14px;
+}
+
+.combat-log-entry-heading strong {
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.combat-log-entry-heading time {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.combat-log-entry-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  font-size: 12px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.combat-log-entry-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.combat-log-entry-actions > button:disabled {
+  cursor: default;
+}
