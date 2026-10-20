@@ -2643,3 +2643,161 @@ test('action types edit, display, infer spell timing, and persist with backup va
     a.close();
   }
 });
+
+test('combat shows compact known spells below attacks, ignores spellbook filters, and opens the original spell for editing', async () => {
+  const a = await app();
+  try {
+    const c = a.api.blank('Combat spells');
+    a.api.use(c);
+    a.api.setPage('combat');
+    assert.equal(a.$('.combat-spells'), null);
+    c.spells = [
+      {
+        name: 'Fire Bolt',
+        level: 0,
+        school: 'Evocation',
+        time: '1 action',
+        actionType: 'Action',
+        range: '120 feet',
+        components: 'V, S',
+        duration: 'Instantaneous',
+        description: 'Full bolt description',
+        prepared: false,
+        concentration: false,
+        ritual: false,
+      },
+      {
+        name: 'Ward <test>',
+        level: 1,
+        school: 'Abjuration',
+        time: '1 bonus action',
+        actionType: 'Bonus action',
+        range: 'Self',
+        components: 'V',
+        duration: '1 minute',
+        description: 'Full ward description <script>',
+        prepared: true,
+        concentration: true,
+        ritual: true,
+      },
+    ];
+    c.spells.reverse();
+    const storedOrder = c.spells.map((spell) => spell.name);
+    a.api.setPage('spells');
+    a.input('[data-spell-filter="name"]', 'Fire Bolt');
+    a.api.setPage('combat');
+    const list = a.$('.combat-spells');
+    assert.ok(list);
+    const panel = list.closest('.panel');
+    assert.equal(panel.querySelector('h2').textContent, 'Spells known');
+    assert.equal(
+      panel.previousElementSibling.querySelector('h2').textContent,
+      'Attacks & actions',
+    );
+    assert.equal(list.querySelectorAll('.attack-summary').length, 2);
+    assert.deepEqual(
+      [...list.querySelectorAll('.attack-summary-heading strong')].map(
+        (el) => el.textContent,
+      ),
+      ['Fire Bolt', 'Ward <test>'],
+    );
+    assert.deepEqual(
+      c.spells.map((spell) => spell.name),
+      storedOrder,
+    );
+    assert.match(list.textContent, /Fire Bolt/);
+    assert.match(list.textContent, /Ward <test>/);
+    assert.match(list.textContent, /Bonus action/);
+    assert.match(list.textContent, /Prepared · Concentration · Ritual/);
+    assert.equal(list.querySelector('test'), null);
+    const ward = list.querySelector('[data-index="0"]');
+    ward.dispatchEvent(new a.w.Event('pointerover', { bubbles: true }));
+    assert.equal(
+      a.$('.spell-popup-description').textContent,
+      'Full ward description <script>',
+    );
+    assert.equal(a.$('.spell-popup-description script'), null);
+    a.click('.combat-spells [data-index="0"]');
+    assert.ok(a.$('[data-spell-editor="0"]'));
+    assert.equal(a.$('[data-field="spells.0.name"]').value, 'Ward <test>');
+    a.input('[data-field="spells.0.name"]', 'Updated ward');
+    a.click('[data-action="finish-spell"]');
+    a.api.setPage('combat');
+    assert.match(a.$('.combat-spells').textContent, /Updated ward/);
+    c.spells = [];
+    a.api.setPage('combat');
+    assert.equal(a.$('.combat-spells'), null);
+  } finally {
+    a.close();
+  }
+});
+
+test('concentrate buttons work from both spell lists without opening editors or clearing active saves', async () => {
+  const a = await app();
+  try {
+    const c = a.api.blank('Concentrate buttons');
+    const spell = (name, level, concentration) => ({
+      name,
+      level,
+      concentration,
+      ritual: false,
+      prepared: true,
+      school: '',
+      time: '1 action',
+      range: '',
+      components: '',
+      duration: '',
+      description: '',
+    });
+    c.spells = [
+      spell('Higher ward', 3, true),
+      spell('Bolt', 0, false),
+      spell('Lower ward', 1, true),
+    ];
+    a.api.use(c);
+    a.api.setPage('combat');
+    assert.equal(
+      a.w.document.querySelectorAll('[data-action="start-concentration"]')
+        .length,
+      2,
+    );
+    assert.equal(
+      a.$('.combat-spells [data-index="1"][data-action="start-concentration"]'),
+      null,
+    );
+    a.click(
+      '.combat-spells [data-index="2"][data-action="start-concentration"]',
+    );
+    assert.equal(c.concentrationSpell, 'Lower ward');
+    assert.ok(a.$('.combat-spells'));
+    assert.equal(a.$('[data-spell-editor]'), null);
+    assert.equal(
+      a.$('[data-action="start-concentration"][data-index="2"]').textContent,
+      'Concentrating',
+    );
+    assert.equal(
+      a.$('[data-action="start-concentration"][data-index="2"]').disabled,
+      true,
+    );
+    c.concentrationDamage = [25];
+    a.api.setPage('spells');
+    a.click('[data-action="start-concentration"][data-index="2"]');
+    assert.deepEqual(Array.from(c.concentrationDamage), [25]);
+    a.input('#concentration-spell', '2');
+    assert.deepEqual(Array.from(c.concentrationDamage), [25]);
+    a.click('[data-action="start-concentration"][data-index="0"]');
+    assert.equal(c.concentrationSpell, 'Higher ward');
+    assert.equal(c.concentrationDamage.length, 0);
+    assert.equal(a.$('[data-spell-editor]'), null);
+    a.click('[data-action="end-concentration"]');
+    assert.equal(
+      a.$('[data-action="start-concentration"][data-index="0"]').disabled,
+      false,
+    );
+    c.hp = 0;
+    a.click('[data-action="start-concentration"][data-index="0"]');
+    assert.equal(c.concentrationSpell, '');
+  } finally {
+    a.close();
+  }
+});

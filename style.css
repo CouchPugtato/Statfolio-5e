@@ -1007,10 +1007,6 @@ input[type='number'],
   text-align: right;
 }
 
-.spell-record-summary .attack-summary-heading strong {
-  font-size: 13px;
-}
-
 .spell-record-meta {
   color: var(--accent);
   font-size: 11px;
@@ -3215,4 +3211,62 @@ dialog:has(.spell-reference) {
   #spell-reference-preview {
     max-height: 32dvh;
   }
+}
+
+.spell-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--panel);
+}
+
+.spell-card:hover {
+  border-color: #617c9b;
+}
+
+.spell-card > .attack-summary {
+  flex: 1;
+  border: 0;
+}
+
+.spell-card:has(.spell-card-actions) .attack-summary-heading {
+  padding-right: 116px;
+}
+
+.spell-card:has(.spell-card-actions) .attack-edit-label {
+  display: none;
+}
+
+.spell-card-actions {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+}
+
+.spell-card-actions > button {
+  width: 108px;
+  min-height: 26px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.spell-card-actions > button[aria-pressed='true'] {
+  color: var(--accent);
+  opacity: 1;
+}
+/* Keep End compact with enough horizontal space around its label. */
+.concentration-heading > [data-action='end-concentration'] {
+  padding-inline: 10px;
+  border-radius: 3px;
+  background: var(--accent-light);
+  box-shadow: 0 0 0 1px var(--line);
+}
+
+.concentration-heading > [data-action='end-concentration']:hover {
+  background: #354c69;
+  box-shadow: 0 0 0 1px var(--accent);
+  text-decoration: none;
 }

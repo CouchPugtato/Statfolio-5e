@@ -797,6 +797,28 @@ function endConcentration(character) {
   character.concentrationDamage = [];
 }
 
+function startConcentration(character, index) {
+  const spell = character.spells[index];
+  if (!spell || !spellFlag(spell, 'concentration') || !spell.name.trim())
+    return;
+  if (character.hp === 0) {
+    toast('Recover hit points before starting concentration.');
+    return;
+  }
+  // Selecting the active spell must not discard unresolved saves.
+  if (character.concentrationSpell === spell.name.trim()) return;
+  endConcentration(character);
+  character.concentrationSpell = spell.name.trim();
+  changed();
+  renderCharacter();
+}
+
+function spellConcentrationButton(character, spell, index) {
+  if (!spellFlag(spell, 'concentration') || !spell.name.trim()) return '';
+  const active = character.concentrationSpell === spell.name.trim();
+  return `<div class="spell-card-actions">${button('start-concentration', active ? 'Concentrating' : 'Concentrate', 'secondary', `data-index="${index}" aria-label="${active ? 'Concentrating on' : 'Concentrate on'} ${esc(spell.name)}" aria-pressed="${active}" ${active ? 'disabled' : ''}`)}</div>`;
+}
+
 function concentrationTracker(character, showLabel = true) {
   const active = character.concentrationSpell;
   const damage = character.concentrationDamage || [];
@@ -1116,6 +1138,60 @@ function attackRecords(c) {
   >`;
 }
 
+// Combat lists every known spell independently of the spellbook's filters.
+function combatSpells(character) {
+  if (!character.spells.length) return '';
+
+  const records = character.spells
+    .map((spell, index) => ({ spell, index }))
+    .sort((a, b) => a.spell.level - b.spell.level)
+    .map(({ spell, index }) => {
+      const metadata = [
+        spell.level === 0 ? 'Cantrip' : `Level ${spell.level}`,
+        spell.school.trim(),
+        spell.prepared ? 'Prepared' : '',
+        spellFlag(spell, 'concentration') ? 'Concentration' : '',
+        spellFlag(spell, 'ritual') ? 'Ritual' : '',
+      ]
+        .filter(Boolean)
+        .join(' · ');
+      const details = [
+        ['Action type', spell.actionType ?? castingActionType(spell.time)],
+        ['Casting time', spell.time],
+        ['Range', spell.range],
+        ['Duration', spell.duration],
+      ]
+        .filter(([, value]) => value.trim())
+        .map(
+          ([label, value]) =>
+            `<span><small>${label}</small><b>${esc(value)}</b></span>`,
+        )
+        .join('');
+
+      return /* HTML */ `<div class="spell-card"
+        ><button
+          class="attack-summary combat-spell-summary"
+          data-action="edit-spell"
+          data-index="${index}"
+          aria-label="Edit ${esc(spell.name || 'unnamed spell')} in spellbook"
+        >
+          <span class="attack-summary-heading"
+            ><strong>${esc(spell.name.trim() || 'Unnamed spell')}</strong
+            ><span class="attack-edit-label">Edit</span></span
+          >
+          <span class="spell-record-meta">${esc(metadata)}</span>
+          ${details ? `<span class="attack-summary-stats">${details}</span>` : ''} </button
+        >${spellConcentrationButton(character, spell, index)}</div
+      >`;
+    })
+    .join('');
+
+  return panel(
+    'Spells known',
+    `<div class="record-list combat-spells">${records}</div>`,
+  );
+}
+
 function hideSpellPopup() {
   if (
     spellPopupCard?.getAttribute('aria-describedby') ===
@@ -1128,8 +1204,9 @@ function hideSpellPopup() {
 }
 
 function showSpellPopup(card) {
-  const spell =
-    page === 'spells' ? current()?.spells[Number(card.dataset.index)] : null;
+  const spell = ['spells', 'combat'].includes(page)
+    ? current()?.spells[Number(card.dataset.index)]
+    : null;
   if (!spell?.description.trim()) {
     hideSpellPopup();
     return;
@@ -1189,7 +1266,9 @@ function showReferencePopup(card, title, descriptionText) {
 
 document.addEventListener('pointerover', (event) => {
   if (event.pointerType === 'touch') return;
-  const card = event.target.closest('.spell-record-summary');
+  const card = event.target.closest(
+    '.spell-record-summary, .combat-spell-summary',
+  );
   if (card) showSpellPopup(card);
   const chip = event.target.closest('[data-condition-reference]');
   if (chip) showConditionPopup(chip);
@@ -1207,7 +1286,9 @@ document.addEventListener('pointerout', (event) => {
 });
 
 document.addEventListener('focusin', (event) => {
-  const card = event.target.closest('.spell-record-summary');
+  const card = event.target.closest(
+    '.spell-record-summary, .combat-spell-summary',
+  );
   const chip = event.target.closest('[data-condition-reference]');
   if (card) showSpellPopup(card);
   else if (chip) showConditionPopup(chip);
@@ -1513,20 +1594,22 @@ function spellRecords(c) {
               >`,
           )
           .join('');
-        return /* HTML */ `<button
-          class="attack-summary spell-record-summary"
-          data-action="edit-spell"
-          data-index="${index}"
-          aria-label="Edit ${esc(spell.name || 'unnamed spell')}"
-        >
-          <span class="attack-summary-heading"
-            ><strong>${esc(spell.name.trim() || 'Unnamed spell')}</strong
-            ><span class="attack-edit-label">Edit</span></span
+        return /* HTML */ `<div class="spell-card"
+          ><button
+            class="attack-summary spell-record-summary"
+            data-action="edit-spell"
+            data-index="${index}"
+            aria-label="Edit ${esc(spell.name || 'unnamed spell')}"
           >
-          <span class="spell-record-meta">${esc(metadata)}</span>
-          ${details ? /* HTML */ `<span class="attack-summary-stats">${details}</span>` : ''}
-          ${spell.description.trim() ? /* HTML */ `<span class="attack-summary-notes spell-description">${esc(spell.description)}</span>` : ''}
-        </button>`;
+            <span class="attack-summary-heading"
+              ><strong>${esc(spell.name.trim() || 'Unnamed spell')}</strong
+              ><span class="attack-edit-label">Edit</span></span
+            >
+            <span class="spell-record-meta">${esc(metadata)}</span>
+            ${details ? /* HTML */ `<span class="attack-summary-stats">${details}</span>` : ''}
+            ${spell.description.trim() ? /* HTML */ `<span class="attack-summary-notes spell-description">${esc(spell.description)}</span>` : ''} </button
+          >${spellConcentrationButton(c, spell, index)}</div
+        >`;
       })
       .join('')}</div
   >`;
@@ -1662,7 +1745,9 @@ const views = {
     /* HTML */ `<div class="combat-stats"
         >${field('Armor class', 'ac', 'number')}${field('Speed (ft)', 'speed', 'number')}${field('Initiative adjustment', 'initiativeBonus', 'number')}${field('Hit dice remaining', 'hitDiceLeft', 'number')}${field('Hit dice', 'hitDice')}</div
       ><div class="sheet-grid"
-        >${panel('Attacks & actions', attackRecords(c), button('add-attack', '＋ Add attack', 'text-button'))}<div
+        ><div
+          >${panel('Attacks & actions', attackRecords(c), button('add-attack', '＋ Add attack', 'text-button'))}${combatSpells(c)}</div
+        ><div
           >${panel('Health & recovery', `${healthControls(c)}<div class="form-grid">${field('Death save successes', 'deathSuccess', 'number', { max: 3 })}${field('Death save failures', 'deathFailure', 'number', { max: 3 })}</div>${conditionsTracker(c)}${button('rest', 'Take a long rest', 'secondary full')}`)}${panel('Features & resources', area('Class features, feats & traits', 'features', 'Record your actions, traits, and limited-use abilities.') + resourceRecords(c), button('add-resource', '＋ Add', 'text-button'))}</div
         ></div
       >`,
@@ -2648,6 +2733,7 @@ document.addEventListener('click', async (e) => {
       break;
 
     case 'edit-spell':
+      page = 'spells';
       editingSpell = c.spells[Number(btn.dataset.index)];
       renderCharacter();
       $('[data-spell-editor] input')?.focus();
@@ -2716,6 +2802,10 @@ document.addEventListener('click', async (e) => {
       $('#currency-amount').focus();
       break;
     }
+
+    case 'start-concentration':
+      startConcentration(c, Number(btn.dataset.index));
+      break;
 
     case 'end-concentration':
     case 'concentration-fail':
@@ -3100,17 +3190,9 @@ document.addEventListener('change', (e) => {
   }
   if (el.id === 'concentration-spell') {
     if (el.value === '') return;
-    const spell = c.spells[Number(el.value)];
-    if (!spell || !spellFlag(spell, 'concentration')) return;
-    if (c.hp === 0) {
-      el.value = '';
-      toast('Recover hit points before starting concentration.');
-      return;
-    }
-    endConcentration(c);
-    c.concentrationSpell = spell.name.trim();
-    changed();
-    renderCharacter();
+    const index = Number(el.value);
+    el.value = '';
+    startConcentration(c, index);
     return;
   }
   if (el.dataset.spellFilter) {
