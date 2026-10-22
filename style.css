@@ -3500,3 +3500,36 @@ dialog:has(.rest-popup) #modal-form {
 dialog:has(.cast-popup) button[type='submit']:disabled {
   cursor: default;
 }
+
+.favorite-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--button-radius);
+  color: var(--accent);
+  font-size: 18px;
+  line-height: 1;
+}
+
+.favorite-toggle:hover,
+.favorite-toggle[aria-pressed='true'] {
+  background: var(--accent-light);
+  border-color: var(--accent);
+}
+
+.spell-card > .favorite-toggle {
+  position: absolute;
+  top: -10px;
+  left: -13px;
+  background: var(--panel);
+}
+
+.spell-card > .favorite-toggle:hover,
+.spell-card > .favorite-toggle[aria-pressed='true'] {
+  background: var(--accent-light);
+}

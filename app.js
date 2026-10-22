@@ -816,8 +816,20 @@ function startConcentration(character, index) {
   renderCharacter();
 }
 
+function favoriteButton(list, entry, index) {
+  const name =
+    entry.name.trim() ||
+    (list === 'spells' ? 'unnamed spell' : 'unnamed attack');
+  return button(
+    'toggle-combat-favorite',
+    entry.favorite ? '★' : '☆',
+    'favorite-toggle',
+    `data-list="${list}" data-index="${index}" aria-label="${entry.favorite ? 'Unpin' : 'Pin'} ${esc(name)}" aria-pressed="${Boolean(entry.favorite)}" title="${entry.favorite ? 'Unpin from' : 'Pin to'} Top of Section"`,
+  );
+}
+
 function spellCardActions(character, spell, index) {
-  if (!spell.name.trim()) return '';
+  if (!spell.name.trim()) return favoriteButton('spells', spell, index);
   const cast = button(
     'cast-spell',
     'Cast',
@@ -833,7 +845,7 @@ function spellCardActions(character, spell, index) {
         `data-index="${index}" aria-label="${active ? 'Concentrating on' : 'Concentrate on'} ${esc(spell.name)}" aria-pressed="${active}" ${active ? 'disabled' : ''}`,
       )
     : '';
-  return `<div class="spell-card-actions">${cast}${concentration}</div>`;
+  return `${favoriteButton('spells', spell, index)}<div class="spell-card-actions">${cast}${concentration}</div>`;
 }
 
 function castSpellPreview(character, spell, level) {
@@ -1562,7 +1574,13 @@ function attackRecords(c) {
     return '<p class="muted">Add your weapons, attacks, and special actions.</p>';
   return /* HTML */ `<div class="record-list"
     >${c.attacks
-      .map((attack, index) => {
+      .map((attack, index) => ({ attack, index }))
+      .sort(
+        (a, b) =>
+          Number(Boolean(b.attack.favorite)) -
+          Number(Boolean(a.attack.favorite)),
+      )
+      .map(({ attack, index }) => {
         if (editingAttack === attack) {
           return /* HTML */ `<div
             class="record attack-editor"
@@ -1620,7 +1638,7 @@ function attackRecords(c) {
             ${attack.notes.trim() ? /* HTML */ `<span class="attack-summary-notes">${esc(attack.notes)}</span>` : ''} </button
           ><div class="spell-card-actions"
             >${button('use-attack', 'Use', 'secondary cast-button', `data-index="${index}" aria-label="Use ${esc(attack.name || 'attack / action')}"`)}</div
-          ></div
+          >${favoriteButton('attacks', attack, index)}</div
         >`;
       })
       .join('')}</div
@@ -1633,7 +1651,11 @@ function combatSpells(character) {
 
   const records = character.spells
     .map((spell, index) => ({ spell, index }))
-    .sort((a, b) => a.spell.level - b.spell.level)
+    .sort(
+      (a, b) =>
+        Number(Boolean(b.spell.favorite)) - Number(Boolean(a.spell.favorite)) ||
+        a.spell.level - b.spell.level,
+    )
     .map(({ spell, index }) => {
       const metadata = [
         spell.level === 0 ? 'Cantrip' : `Level ${spell.level}`,
@@ -2216,7 +2238,12 @@ function spellRecords(c) {
 
   return /* HTML */ `<div class="spell-grid"
     >${c.spells
-      .map((spell, index) => {
+      .map((spell, index) => ({ spell, index }))
+      .sort(
+        (a, b) =>
+          Number(Boolean(b.spell.favorite)) - Number(Boolean(a.spell.favorite)),
+      )
+      .map(({ spell, index }) => {
         if (!matchesSpell(spell) && editingSpell !== spell) return '';
         if (editingSpell === spell) {
           return /* HTML */ `<div
@@ -3290,6 +3317,14 @@ function validateBackup(input) {
             clean.recovery = item.recovery;
           }
         }
+        if (
+          (key === 'attacks' || key === 'spells') &&
+          item.favorite !== undefined
+        ) {
+          if (typeof item.favorite !== 'boolean')
+            throw Error('Invalid combat favorite.');
+          clean.favorite = item.favorite;
+        }
         if (key === 'attacks' || key === 'spells') {
           if (item.actionType !== undefined) {
             if (!actionTypes.includes(item.actionType))
@@ -3576,6 +3611,17 @@ document.addEventListener('click', async (e) => {
         'Delete character',
       );
       break;
+
+    case 'toggle-combat-favorite': {
+      const list = btn.dataset.list;
+      if (!['attacks', 'spells'].includes(list)) break;
+      const entry = c[list][Number(btn.dataset.index)];
+      if (!entry) break;
+      entry.favorite = !entry.favorite;
+      changed();
+      renderCharacter();
+      break;
+    }
 
     case 'use-attack':
       openUseAttackModal(c, Number(btn.dataset.index));

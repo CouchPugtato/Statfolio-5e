@@ -3759,3 +3759,161 @@ test('attack counters reject invalid limits, validate backups, and retain stable
     a.close();
   }
 });
+
+test('pins move attacks and spells to the top of their own sections without duplicating or changing data order', async () => {
+  const a = await app();
+  try {
+    const c = a.api.blank('Pinned sections');
+    c.attacks = [
+      { name: 'Sword', bonus: '', damage: '', type: '', notes: '' },
+      {
+        name: 'Burst',
+        bonus: '',
+        damage: '',
+        type: '',
+        notes: '',
+        useLimit: 2,
+        usesSpent: 0,
+        recovery: 'short',
+      },
+    ];
+    const spell = (name, level) => ({
+      name,
+      level,
+      school: '',
+      time: '',
+      range: '',
+      components: '',
+      duration: '',
+      description: 'Preview text',
+      prepared: true,
+      concentration: false,
+      ritual: false,
+    });
+    c.spells = [spell('Bolt', 0), spell('Ward', 2), spell('Light', 0)];
+    c.slots[1] = 1;
+    a.api.use(c);
+    a.api.setPage('combat');
+    const names = (selector) =>
+      [...a.w.document.querySelectorAll(selector)].map((el) => el.textContent);
+    a.click(
+      '.attack-card [data-action="toggle-combat-favorite"][data-index="1"]',
+    );
+    a.click(
+      '.combat-spells [data-action="toggle-combat-favorite"][data-index="1"]',
+    );
+    assert.equal(a.$('.combat-favorites'), null);
+    assert.deepEqual(names('.attack-card .attack-summary-heading strong'), [
+      'Burst',
+      'Sword',
+    ]);
+    assert.deepEqual(names('.combat-spells .attack-summary-heading strong'), [
+      'Ward',
+      'Bolt',
+      'Light',
+    ]);
+    assert.deepEqual(
+      c.attacks.map((item) => item.name),
+      ['Sword', 'Burst'],
+    );
+    assert.deepEqual(
+      c.spells.map((item) => item.name),
+      ['Bolt', 'Ward', 'Light'],
+    );
+    a.click('.attack-card [data-action="use-attack"][data-index="1"]');
+    await a.submit();
+    assert.equal(c.attacks[1].usesSpent, 1);
+    a.click('.combat-spells [data-action="cast-spell"][data-index="1"]');
+    await a.submit();
+    assert.equal(c.usedSlots[1], 1);
+    a.click('.combat-spells [data-action="edit-spell"][data-index="1"]');
+    assert.equal(a.$('[data-field="spells.1.name"]').value, 'Ward');
+    a.click('[data-action="finish-spell"]');
+    assert.deepEqual(names('#spell-results .attack-summary-heading strong'), [
+      'Ward',
+      'Bolt',
+      'Light',
+    ]);
+    a.click(
+      '#spell-results [data-action="toggle-combat-favorite"][data-index="1"]',
+    );
+    assert.deepEqual(names('#spell-results .attack-summary-heading strong'), [
+      'Bolt',
+      'Ward',
+      'Light',
+    ]);
+    a.api.setPage('combat');
+    a.click(
+      '.attack-card [data-action="toggle-combat-favorite"][data-index="1"]',
+    );
+    assert.deepEqual(names('.attack-card .attack-summary-heading strong'), [
+      'Sword',
+      'Burst',
+    ]);
+    assert.deepEqual(names('.combat-spells .attack-summary-heading strong'), [
+      'Bolt',
+      'Light',
+      'Ward',
+    ]);
+  } finally {
+    a.close();
+  }
+});
+
+test('favorite pins work from the spellbook, preserve search, persist and validate in backups, and stay per character', async () => {
+  const a = await app();
+  let reopened;
+  try {
+    const c = a.api.blank('Saved pins');
+    c.spells = [
+      {
+        name: 'Ward',
+        level: 1,
+        school: '',
+        time: '',
+        range: '',
+        components: '',
+        duration: '',
+        description: '',
+        prepared: true,
+        concentration: false,
+        ritual: false,
+      },
+    ];
+    a.api.use(c);
+    a.api.setPage('spells');
+    a.input('[data-spell-filter="name"]', 'Ward');
+    a.click('#spell-results [data-action="toggle-combat-favorite"]');
+    assert.equal(c.spells[0].favorite, true);
+    assert.equal(a.$('[data-spell-filter="name"]').value, 'Ward');
+    assert.equal(
+      a.$('#spell-results .favorite-toggle').getAttribute('aria-pressed'),
+      'true',
+    );
+    assert.equal(a.$('[data-spell-editor]'), null);
+    await a.api.persist();
+    reopened = await app(a.storage);
+    reopened.api.setPage('combat');
+    assert.equal(
+      reopened
+        .$('.combat-spells .favorite-toggle')
+        .getAttribute('aria-pressed'),
+      'true',
+    );
+    await a.api.exportBackup();
+    const backup = JSON.parse(await a.download().text());
+    assert.equal(a.api.validateBackup(backup)[0].spells[0].favorite, true);
+    backup.characters[0].spells[0].favorite = 'yes';
+    assert.throws(
+      () => a.api.validateBackup(backup),
+      /Invalid combat favorite/,
+    );
+    a.api.use(a.api.blank('Different character'));
+    a.api.setPage('combat');
+    assert.equal(a.$('.combat-favorites'), null);
+    assert.equal(c.spells[0].favorite, true);
+  } finally {
+    reopened?.close();
+    a.close();
+  }
+});
