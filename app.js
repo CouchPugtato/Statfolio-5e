@@ -829,7 +829,7 @@ function favoriteButton(list, entry, index) {
 }
 
 function spellCardActions(character, spell, index) {
-  if (!spell.name.trim()) return favoriteButton('spells', spell, index);
+  if (!spell.name.trim()) return '';
   const cast = button(
     'cast-spell',
     'Cast',
@@ -845,7 +845,7 @@ function spellCardActions(character, spell, index) {
         `data-index="${index}" aria-label="${active ? 'Concentrating on' : 'Concentrate on'} ${esc(spell.name)}" aria-pressed="${active}" ${active ? 'disabled' : ''}`,
       )
     : '';
-  return `${favoriteButton('spells', spell, index)}<div class="spell-card-actions">${cast}${concentration}</div>`;
+  return `<div class="spell-card-actions">${cast}${concentration}</div>`;
 }
 
 function castSpellPreview(character, spell, level) {
@@ -1569,6 +1569,59 @@ function openUseAttackModal(character, index) {
     (limited && attackUsesRemaining(attack) === 0) || character.hp === 0;
 }
 
+function resourceShortcutButton(list, entry, index, direction) {
+  const remaining =
+    list === 'attacks' ? attackUsesRemaining(entry) : entry.remaining;
+  const maximum = list === 'attacks' ? entry.useLimit : entry.max;
+  const disabled = direction < 0 ? remaining <= 0 : remaining >= maximum;
+  const name =
+    entry.name.trim() || (list === 'attacks' ? 'attack / action' : 'resource');
+  return button(
+    'adjust-resource',
+    direction < 0 ? '−' : '+',
+    'resource-step-button',
+    `data-list="${list}" data-index="${index}" data-direction="${direction}" aria-label="${direction < 0 ? 'Spend' : 'Regain'} one use of ${esc(name)}" ${disabled ? 'disabled' : ''}`,
+  );
+}
+
+function attackUseShortcuts(attack, index) {
+  if (!attackHasUses(attack)) return '';
+  return `<div class="resource-shortcuts"><span>Uses</span><div class="resource-stepper" role="group" aria-label="${esc(attack.name || 'Attack / Action')} uses">${resourceShortcutButton('attacks', attack, index, -1)}<output aria-live="polite">${attackUsesRemaining(attack)}/${attack.useLimit}</output>${resourceShortcutButton('attacks', attack, index, 1)}</div>${attack.recovery ? `<small>${attack.recovery === 'short' ? 'Short or Long' : 'Long'} Rest</small>` : ''}</div>`;
+}
+
+function resourceRemainingField(resource, index) {
+  return `<div class="field resource-remaining-field"><span>Remaining</span><div class="resource-stepper" role="group" aria-label="${esc(resource.name || 'Resource')} remaining uses">${resourceShortcutButton('resources', resource, index, -1)}<input type="number" min="0" step="1" data-field="resources.${index}.remaining" value="${resource.remaining}" aria-label="${esc(resource.name || 'Resource')} remaining" />${resourceShortcutButton('resources', resource, index, 1)}</div></div>`;
+}
+
+function adjustResource(character, list, index, direction) {
+  if (!['attacks', 'resources'].includes(list) || ![-1, 1].includes(direction))
+    return;
+  const entry = character[list][index];
+  if (!entry || (list === 'attacks' && !attackHasUses(entry))) return;
+  const remaining =
+    list === 'attacks' ? attackUsesRemaining(entry) : entry.remaining;
+  const maximum = list === 'attacks' ? entry.useLimit : entry.max;
+  // At either bound, clicking or dispatching the action has no side effects.
+  if (direction > 0 ? remaining >= maximum : remaining <= 0) return;
+  const next =
+    direction > 0
+      ? Math.min(maximum, remaining + 1)
+      : Math.max(0, remaining - 1);
+  entry.id ||= uid();
+  if (list === 'attacks') entry.usesSpent ||= 0;
+  const target = `${list === 'attacks' ? 'attack' : 'resource'}:${entry.id}`;
+  const before = combatSnapshot(character, [target]);
+  if (list === 'attacks') entry.usesSpent = entry.useLimit - next;
+  else entry.remaining = next;
+  recordCombatEvent(
+    character,
+    `${entry.name || 'Resource'}: ${direction < 0 ? 'spent' : 'restored'} ${Math.abs(next - remaining)}`,
+    before,
+  );
+  changed();
+  renderCharacter();
+}
+
 function attackRecords(c) {
   if (!c.attacks.length)
     return '<p class="muted">Add your weapons, attacks, and special actions.</p>';
@@ -1588,6 +1641,7 @@ function attackRecords(c) {
           >
             <div class="record-top">
               ${field('Attack / Action', `attacks.${index}.name`)}
+              ${favoriteButton('attacks', attack, index)}
               ${button('remove', '×', 'icon-button', `data-list="attacks" data-index="${index}" aria-label="Remove attack"`)}
             </div>
             <div class="form-grid three">
@@ -1608,12 +1662,6 @@ function attackRecords(c) {
           ['Attack', attack.bonus],
           ['Damage', attack.damage],
           ['Type / Range', attack.type],
-          [
-            'Uses',
-            attackHasUses(attack)
-              ? `${attackUsesRemaining(attack)}/${attack.useLimit}${attack.recovery ? ` · ${attack.recovery === 'short' ? 'Short or Long' : 'Long'} Rest` : ''}`
-              : '',
-          ],
         ]
           .filter(([, value]) => value.trim())
           .map(
@@ -1636,9 +1684,9 @@ function attackRecords(c) {
             >
             ${details ? /* HTML */ `<span class="attack-summary-stats">${details}</span>` : '<span class="muted">Click to add attack details.</span>'}
             ${attack.notes.trim() ? /* HTML */ `<span class="attack-summary-notes">${esc(attack.notes)}</span>` : ''} </button
-          ><div class="spell-card-actions"
+          >${attackUseShortcuts(attack, index)}<div class="spell-card-actions"
             >${button('use-attack', 'Use', 'secondary cast-button', `data-index="${index}" aria-label="Use ${esc(attack.name || 'attack / action')}"`)}</div
-          >${favoriteButton('attacks', attack, index)}</div
+          ></div
         >`;
       })
       .join('')}</div
@@ -2252,6 +2300,7 @@ function spellRecords(c) {
           >
             <div class="record-top">
               ${field('Spell Name', `spells.${index}.name`)}
+              ${favoriteButton('spells', spell, index)}
               ${button('remove', '×', 'icon-button', `data-list="spells" data-index="${index}" aria-label="Remove spell"`)}
             </div>
             <div class="form-grid three">
@@ -2348,7 +2397,7 @@ function resourceRecords(character) {
         ><div class="record-top"
           >${field('Resource', `${path}.name`)}${removeButton}</div
         ><div class="form-grid"
-          >${field('Remaining', `${path}.remaining`, 'number')}${field('Maximum', `${path}.max`, 'number')}</div
+          >${resourceRemainingField(resource, index)}${field('Maximum', `${path}.max`, 'number')}</div
         ><label class="field"
           ><span>Resets on</span
           ><select data-field="${path}.recovery"
@@ -3623,6 +3672,15 @@ document.addEventListener('click', async (e) => {
       break;
     }
 
+    case 'adjust-resource':
+      adjustResource(
+        c,
+        btn.dataset.list,
+        Number(btn.dataset.index),
+        Number(btn.dataset.direction),
+      );
+      break;
+
     case 'use-attack':
       openUseAttackModal(c, Number(btn.dataset.index));
       break;
@@ -4015,7 +4073,7 @@ document.addEventListener('click', (event) => {
   if (
     editingAttack &&
     !event.target.closest(
-      '[data-attack-editor], [data-action="edit-attack"], [data-action="add-attack"]',
+      '[data-attack-editor], [data-action="edit-attack"], [data-action="add-attack"], [data-action="toggle-combat-favorite"]',
     )
   ) {
     editingAttack = null;
@@ -4024,7 +4082,7 @@ document.addEventListener('click', (event) => {
   if (
     editingSpell &&
     !event.target.closest(
-      '[data-spell-editor], [data-action="edit-spell"], [data-action="add-spell"]',
+      '[data-spell-editor], [data-action="edit-spell"], [data-action="add-spell"], [data-action="toggle-combat-favorite"]',
     )
   ) {
     editingSpell = null;

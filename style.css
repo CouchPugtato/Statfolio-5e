@@ -3533,3 +3533,69 @@ dialog:has(.cast-popup) button[type='submit']:disabled {
 .spell-card > .favorite-toggle[aria-pressed='true'] {
   background: var(--accent-light);
 }
+
+.resource-shortcuts,
+.resource-stepper {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.resource-shortcuts {
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 0 16px 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.resource-stepper > output {
+  min-width: 48px;
+  text-align: center;
+  color: var(--ink);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.resource-step-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--button-radius);
+  background: var(--paper);
+  color: var(--accent);
+  font-size: 18px;
+  line-height: 1;
+}
+
+.resource-step-button:hover:not(:disabled) {
+  background: var(--accent-light);
+  border-color: var(--accent);
+}
+
+.resource-step-button:disabled {
+  cursor: default;
+}
+
+.resource-remaining-field {
+  display: grid;
+  grid-template-columns: min(40%, 8rem) minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.resource-stepper > input {
+  flex: 1;
+  width: 0;
+  min-width: 36px;
+  min-height: 40px;
+  padding: 9px 4px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}

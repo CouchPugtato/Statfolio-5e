@@ -3620,14 +3620,12 @@ test('attack use limits are optional, show remaining uses only when configured, 
     a.input('[data-attack-use-limit="0"]', '2');
     a.input('[data-field="attacks.0.recovery"]', 'short');
     a.click('[data-action="finish-attack"]');
-    assert.match(
-      a.$('.attack-summary').textContent,
-      /Uses2\/2 · Short or Long Rest/,
-    );
+    assert.equal(a.$('.attack-card output').textContent, '2/2');
+    assert.match(a.$('.resource-shortcuts').textContent, /Short or Long Rest/);
     a.click('[data-action="use-attack"]');
     await a.submit();
     assert.equal(c.attacks[0].usesSpent, 1);
-    assert.match(a.$('.attack-summary').textContent, /Uses1\/2/);
+    assert.equal(a.$('.attack-card output').textContent, '1/2');
     assert.equal(c.combatLog[0].label, 'Use Second Wind');
     a.click('[data-action="use-attack"]');
     await a.submit();
@@ -3796,12 +3794,16 @@ test('pins move attacks and spells to the top of their own sections without dupl
     a.api.setPage('combat');
     const names = (selector) =>
       [...a.w.document.querySelectorAll(selector)].map((el) => el.textContent);
-    a.click(
-      '.attack-card [data-action="toggle-combat-favorite"][data-index="1"]',
-    );
-    a.click(
-      '.combat-spells [data-action="toggle-combat-favorite"][data-index="1"]',
-    );
+    assert.equal(a.$('.attack-card .favorite-toggle'), null);
+    a.click('.attack-card [data-action="edit-attack"][data-index="1"]');
+    a.click('[data-attack-editor] .favorite-toggle');
+    assert.ok(a.$('[data-attack-editor]'));
+    a.click('[data-action="finish-attack"]');
+    assert.equal(a.$('.combat-spells .favorite-toggle'), null);
+    a.click('.combat-spells [data-action="edit-spell"][data-index="1"]');
+    a.click('[data-spell-editor] .favorite-toggle');
+    a.click('[data-action="finish-spell"]');
+    a.api.setPage('combat');
     assert.equal(a.$('.combat-favorites'), null);
     assert.deepEqual(names('.attack-card .attack-summary-heading strong'), [
       'Burst',
@@ -3834,18 +3836,21 @@ test('pins move attacks and spells to the top of their own sections without dupl
       'Bolt',
       'Light',
     ]);
-    a.click(
-      '#spell-results [data-action="toggle-combat-favorite"][data-index="1"]',
-    );
+    assert.equal(a.$('#spell-results .favorite-toggle'), null);
+    a.click('#spell-results [data-action="edit-spell"][data-index="1"]');
+    a.click('[data-spell-editor] .favorite-toggle');
+    a.click('[data-action="finish-spell"]');
     assert.deepEqual(names('#spell-results .attack-summary-heading strong'), [
       'Bolt',
       'Ward',
       'Light',
     ]);
     a.api.setPage('combat');
-    a.click(
-      '.attack-card [data-action="toggle-combat-favorite"][data-index="1"]',
-    );
+    assert.equal(a.$('.attack-card .favorite-toggle'), null);
+    a.click('.attack-card [data-action="edit-attack"][data-index="1"]');
+    a.click('[data-attack-editor] .favorite-toggle');
+    assert.ok(a.$('[data-attack-editor]'));
+    a.click('[data-action="finish-attack"]');
     assert.deepEqual(names('.attack-card .attack-summary-heading strong'), [
       'Sword',
       'Burst',
@@ -3883,23 +3888,23 @@ test('favorite pins work from the spellbook, preserve search, persist and valida
     a.api.use(c);
     a.api.setPage('spells');
     a.input('[data-spell-filter="name"]', 'Ward');
-    a.click('#spell-results [data-action="toggle-combat-favorite"]');
+    assert.equal(a.$('#spell-results .favorite-toggle'), null);
+    a.click('#spell-results [data-action="edit-spell"]');
+    a.click('[data-spell-editor] .favorite-toggle');
     assert.equal(c.spells[0].favorite, true);
     assert.equal(a.$('[data-spell-filter="name"]').value, 'Ward');
     assert.equal(
       a.$('#spell-results .favorite-toggle').getAttribute('aria-pressed'),
       'true',
     );
-    assert.equal(a.$('[data-spell-editor]'), null);
+    assert.ok(a.$('[data-spell-editor]'));
+    a.click('[data-action="finish-spell"]');
+    assert.equal(a.$('#spell-results .favorite-toggle'), null);
     await a.api.persist();
     reopened = await app(a.storage);
     reopened.api.setPage('combat');
-    assert.equal(
-      reopened
-        .$('.combat-spells .favorite-toggle')
-        .getAttribute('aria-pressed'),
-      'true',
-    );
+    assert.equal(reopened.$('.combat-spells .favorite-toggle'), null);
+    assert.equal(reopened.api.current.spells[0].favorite, true);
     await a.api.exportBackup();
     const backup = JSON.parse(await a.download().text());
     assert.equal(a.api.validateBackup(backup)[0].spells[0].favorite, true);
@@ -3914,6 +3919,108 @@ test('favorite pins work from the spellbook, preserve search, persist and valida
     assert.equal(c.spells[0].favorite, true);
   } finally {
     reopened?.close();
+    a.close();
+  }
+});
+
+test('resource shortcuts spend and restore one use within bounds and support combat-log undo', async () => {
+  const a = await app();
+  let reopened;
+  try {
+    const c = a.api.blank('Resource shortcuts');
+    c.resources = [
+      { name: 'Ki', remaining: 2, max: 2 },
+      { name: 'Empty', remaining: 0, max: 0 },
+    ];
+    a.api.use(c);
+    a.api.setPage('combat');
+    const selector = (direction, index = 0) =>
+      `[data-action="adjust-resource"][data-list="resources"][data-index="${index}"][data-direction="${direction}"]`;
+    assert.equal(a.$(selector(1)).disabled, true);
+    assert.equal(a.$(selector(-1, 1)).disabled, true);
+    assert.equal(a.$(selector(1, 1)).disabled, true);
+    const initial = JSON.stringify(c);
+    a.click(selector(1));
+    assert.equal(JSON.stringify(c), initial);
+    a.click(selector(-1));
+    assert.equal(c.resources[0].remaining, 1);
+    assert.equal(c.combatLog[0].label, 'Ki: spent 1');
+    assert.equal(a.$('[data-field="resources.0.remaining"]').value, '1');
+    a.click(selector(-1));
+    assert.equal(c.resources[0].remaining, 0);
+    assert.equal(a.$(selector(-1)).disabled, true);
+    a.click(selector(-1));
+    assert.equal(c.combatLog.length, 2);
+    a.click(selector(1));
+    assert.equal(c.resources[0].remaining, 1);
+    assert.equal(c.combatLog[0].label, 'Ki: restored 1');
+    assert.equal(a.$('[data-attack-editor]'), null);
+    a.click('[data-action="combat-log"]');
+    a.click('.combat-log [data-action="undo-combat-event"]:not(:disabled)');
+    assert.equal(c.resources[0].remaining, 0);
+    a.click('[data-action="close-modal"]');
+    await a.api.persist();
+    reopened = await app(a.storage);
+    assert.equal(reopened.api.current.resources[0].remaining, 0);
+    assert.equal(reopened.api.current.combatLog.length, 3);
+  } finally {
+    reopened?.close();
+    a.close();
+  }
+});
+
+test('attack shortcuts appear only for limited actions and adjust the correct pinned entry with undo and rest recovery', async () => {
+  const a = await app();
+  try {
+    const c = a.api.blank('Action shortcuts');
+    c.attacks = [
+      { name: 'Unlimited', bonus: '', damage: '', type: '', notes: '' },
+      {
+        name: 'Limited',
+        bonus: '',
+        damage: '',
+        type: '',
+        notes: '',
+        useLimit: 2,
+        usesSpent: 0,
+        recovery: 'short',
+        favorite: true,
+      },
+    ];
+    a.api.use(c);
+    a.api.setPage('combat');
+    const selector = (direction) =>
+      `[data-action="adjust-resource"][data-list="attacks"][data-index="1"][data-direction="${direction}"]`;
+    assert.equal(
+      a.$(
+        '[data-action="adjust-resource"][data-list="attacks"][data-index="0"]',
+      ),
+      null,
+    );
+    assert.equal(a.$('.attack-card output').textContent, '2/2');
+    assert.equal(a.$(selector(1)).disabled, true);
+    a.click(selector(-1));
+    assert.equal(c.attacks[1].usesSpent, 1);
+    assert.equal(a.$('.attack-card output').textContent, '1/2');
+    assert.equal(c.combatLog[0].label, 'Limited: spent 1');
+    assert.equal(a.$('[data-attack-editor]'), null);
+    assert.equal(a.$('#modal').open, false);
+    a.click(selector(-1));
+    assert.equal(a.$(selector(-1)).disabled, true);
+    a.click(selector(1));
+    assert.equal(c.attacks[1].usesSpent, 1);
+    a.click('[data-action="combat-log"]');
+    a.click('.combat-log [data-action="undo-combat-event"]:not(:disabled)');
+    assert.equal(c.attacks[1].usesSpent, 2);
+    a.click('[data-action="close-modal"]');
+    a.api.setPage('overview');
+    a.click('[data-action="short-rest"]');
+    await a.submit();
+    assert.equal(c.attacks[1].usesSpent, 0);
+    a.api.setPage('combat');
+    assert.equal(a.$('.attack-card output').textContent, '2/2');
+    assert.equal(a.$(selector(1)).disabled, true);
+  } finally {
     a.close();
   }
 });
