@@ -3234,14 +3234,20 @@ dialog:has(.reference-picker)::-webkit-scrollbar {
 }
 
 .spell-card:has(.spell-card-actions) .attack-summary-heading {
-  padding-right: 116px;
+  padding-right: 52px;
 }
 
 .spell-card:has(.spell-card-actions) .attack-edit-label {
   display: none;
 }
 
+.spell-card:has([data-action='start-concentration']) .attack-summary-heading {
+  padding-right: 168px;
+}
+
 .spell-card-actions {
+  display: flex;
+  gap: 6px;
   position: absolute;
   top: 8px;
   right: 12px;
@@ -3473,4 +3479,20 @@ dialog:has(.rest-popup) #modal-form {
 .equipment-import-quantity {
   max-width: 240px;
   margin-bottom: var(--field-gap);
+}
+
+.spell-card-actions > .cast-button {
+  width: 46px;
+}
+
+.cast-popup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--group-gap);
+}
+
+.cast-popup > h3 {
+  color: var(--accent);
+  font-size: 18px;
+  overflow-wrap: anywhere;
 }

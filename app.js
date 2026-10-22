@@ -816,10 +816,120 @@ function startConcentration(character, index) {
   renderCharacter();
 }
 
-function spellConcentrationButton(character, spell, index) {
-  if (!spellFlag(spell, 'concentration') || !spell.name.trim()) return '';
+function spellCardActions(character, spell, index) {
+  if (!spell.name.trim()) return '';
+  const cast = button(
+    'cast-spell',
+    'Cast',
+    'secondary cast-button',
+    `data-index="${index}" aria-label="Cast ${esc(spell.name)}"`,
+  );
   const active = character.concentrationSpell === spell.name.trim();
-  return `<div class="spell-card-actions">${button('start-concentration', active ? 'Concentrating' : 'Concentrate', 'secondary', `data-index="${index}" aria-label="${active ? 'Concentrating on' : 'Concentrate on'} ${esc(spell.name)}" aria-pressed="${active}" ${active ? 'disabled' : ''}`)}</div>`;
+  const concentration = spellFlag(spell, 'concentration')
+    ? button(
+        'start-concentration',
+        active ? 'Concentrating' : 'Concentrate',
+        'secondary',
+        `data-index="${index}" aria-label="${active ? 'Concentrating on' : 'Concentrate on'} ${esc(spell.name)}" aria-pressed="${active}" ${active ? 'disabled' : ''}`,
+      )
+    : '';
+  return `<div class="spell-card-actions">${cast}${concentration}</div>`;
+}
+
+function castSpellPreview(character, spell, level) {
+  const lines = [];
+  if (character.hp === 0) lines.push('Recover hit points before casting.');
+  if (spell.level === 0) lines.push('Cantrip: no spell slot is spent.');
+  else if (Number.isInteger(level) && level >= spell.level && level <= 9) {
+    const remaining = Math.max(
+      0,
+      character.slots[level - 1] - character.usedSlots[level - 1],
+    );
+    lines.push(
+      `Level ${level} slots remaining: ${remaining} → ${Math.max(0, remaining - 1)}`,
+    );
+  } else lines.push('No available spell slots at this level or higher.');
+  if (spellFlag(spell, 'concentration')) {
+    lines.push(
+      character.concentrationSpell
+        ? `Replace concentration on ${character.concentrationSpell} with ${spell.name}.`
+        : `Start concentrating on ${spell.name}.`,
+    );
+  }
+  return `<ul>${lines.map((line) => `<li>${esc(line)}</li>`).join('')}</ul>`;
+}
+
+function openCastSpellModal(character, index) {
+  const spell = character.spells[index];
+  if (!spell || !spell.name.trim()) return;
+  const levels = Array.from(
+    { length: 10 - Math.max(1, spell.level) },
+    (_, offset) => Math.max(1, spell.level) + offset,
+  );
+  const available = (level) =>
+    Math.max(0, character.slots[level - 1] - character.usedSlots[level - 1]);
+  const firstLevel =
+    spell.level === 0 ? 0 : levels.find((level) => available(level) > 0);
+  const selector =
+    spell.level === 0
+      ? '<input type="hidden" name="slot-level" value="0" />'
+      : `<label class="field"><span>Slot Level</span><select name="slot-level" id="cast-slot-level">${firstLevel === undefined ? '<option value="">No available slots</option>' : ''}${levels.map((level) => `<option value="${level}" ${level === firstLevel ? 'selected' : ''} ${available(level) === 0 ? 'disabled' : ''}>Level ${level} · ${available(level)} available${level > spell.level ? ' · Upcast' : ''}</option>`).join('')}</select></label>`;
+  modal(
+    'Cast Spell',
+    /* HTML */ `<div class="cast-popup"
+      ><h3>${esc(spell.name)}</h3>${selector}<section
+        class="rest-preview"
+        aria-live="polite"
+        ><h3>Casting Preview</h3
+        ><div id="cast-preview"
+          >${castSpellPreview(character, spell, firstLevel)}</div
+        ></section
+      ></div
+    >`,
+    (data) => {
+      if (!character.spells.includes(spell))
+        throw Error('This spell is no longer in your spellbook.');
+      if (character.hp === 0) throw Error('Recover hit points before casting.');
+      const level = Number(data.get('slot-level'));
+      if (
+        spell.level === 0
+          ? level !== 0
+          : !Number.isInteger(level) ||
+            level < spell.level ||
+            level > 9 ||
+            available(level) < 1
+      )
+        throw Error('Choose an available slot at the spell’s level or higher.');
+      const before = combatSnapshot(character, [
+        'concentrationSpell',
+        'concentrationDamage',
+        ...(level > 0 ? [`usedSlots.${level - 1}`] : []),
+      ]);
+      if (level > 0) character.usedSlots[level - 1]++;
+      if (spellFlag(spell, 'concentration')) {
+        endConcentration(character);
+        character.concentrationSpell = spell.name.trim();
+      }
+      const recorded = recordCombatEvent(
+        character,
+        `Cast ${spell.name}${level > 0 ? ` · Level ${level}` : ' · Cantrip'}`,
+        before,
+      );
+      if (recorded) changed();
+      renderCharacter();
+      toast(`${spell.name} cast${level > 0 ? ` at level ${level}` : ''}.`);
+    },
+    'Cast Spell',
+  );
+  $('#modal button[type="submit"]').disabled =
+    firstLevel === undefined || character.hp === 0;
+  $('#cast-slot-level')?.addEventListener('change', (event) => {
+    $('#cast-preview').innerHTML = castSpellPreview(
+      character,
+      spell,
+      Number(event.target.value),
+    );
+  });
 }
 
 function concentrationTracker(character, showLabel = true) {
@@ -896,7 +1006,7 @@ function recordCombatEvent(character, label, snapshot) {
     .filter(
       ({ before, after }) => JSON.stringify(before) !== JSON.stringify(after),
     );
-  if (!changes.length) return;
+  if (!changes.length) return false;
   character.combatLog.unshift({
     id: uid(),
     at: new Date().toISOString(),
@@ -905,6 +1015,7 @@ function recordCombatEvent(character, label, snapshot) {
     undone: false,
   });
   character.combatLog.length = Math.min(character.combatLog.length, 100);
+  return true;
 }
 
 function combatUndoReason(character, entry) {
@@ -1463,7 +1574,7 @@ function combatSpells(character) {
           >
           ${details ? `<span class="attack-summary-stats">${details}</span>` : ''}
           ${spell.description.trim() ? `<span class="attack-summary-notes spell-description">${esc(spell.description)}</span>` : ''} </button
-        >${spellConcentrationButton(character, spell, index)}</div
+        >${spellCardActions(character, spell, index)}</div
       >`;
     })
     .join('');
@@ -2074,7 +2185,7 @@ function spellRecords(c) {
             <span class="spell-record-meta">${esc(metadata)}</span>
             ${details ? /* HTML */ `<span class="attack-summary-stats">${details}</span>` : ''}
             ${spell.description.trim() ? /* HTML */ `<span class="attack-summary-notes spell-description">${esc(spell.description)}</span>` : ''} </button
-          >${spellConcentrationButton(c, spell, index)}</div
+          >${spellCardActions(c, spell, index)}</div
         >`;
       })
       .join('')}</div
@@ -3487,6 +3598,10 @@ document.addEventListener('click', async (e) => {
       toast('Combat change undone.');
       break;
     }
+
+    case 'cast-spell':
+      openCastSpellModal(c, Number(btn.dataset.index));
+      break;
 
     case 'start-concentration':
       startConcentration(c, Number(btn.dataset.index));

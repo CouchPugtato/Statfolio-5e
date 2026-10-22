@@ -3425,3 +3425,177 @@ test('equipment import cancels safely, retries failed loads, rejects invalid qua
     a.close();
   }
 });
+
+test('casting picks an available slot at or above spell level and atomically replaces concentration with combat-log undo', async () => {
+  const a = await app();
+  let reopened;
+  try {
+    const c = a.api.blank('Cast up');
+    c.spells = [
+      {
+        name: 'Ward <new>',
+        level: 2,
+        school: 'Abjuration',
+        time: '1 action',
+        range: 'Self',
+        components: 'V',
+        duration: '1 minute',
+        description: 'Ward effect',
+        concentration: true,
+        ritual: false,
+        prepared: true,
+      },
+    ];
+    c.slots = [4, 2, 2, 0, 0, 0, 0, 0, 0];
+    c.usedSlots[1] = 2;
+    c.concentrationSpell = 'Old ward';
+    c.concentrationDamage = [25];
+    a.api.use(c);
+    a.api.setPage('spells');
+    const initial = JSON.stringify(c);
+    a.click('[data-action="cast-spell"][data-index="0"]');
+    assert.equal(a.$('#cast-slot-level').value, '3');
+    assert.equal(a.$('#cast-slot-level option[value="1"]'), null);
+    assert.equal(a.$('#cast-slot-level option[value="2"]').disabled, true);
+    assert.match(
+      a.$('#cast-preview').textContent,
+      /Level 3 slots remaining: 2 → 1/,
+    );
+    assert.match(
+      a.$('#cast-preview').textContent,
+      /Replace concentration on Old ward/,
+    );
+    assert.equal(a.$('.cast-popup new'), null);
+    a.click('[data-action="close-modal"]');
+    assert.equal(JSON.stringify(c), initial);
+    a.click('[data-action="cast-spell"][data-index="0"]');
+    await a.submit();
+    assert.equal(c.usedSlots[2], 1);
+    assert.equal(c.usedSlots[1], 2);
+    assert.equal(c.concentrationSpell, 'Ward <new>');
+    assert.equal(c.concentrationDamage.length, 0);
+    assert.equal(c.combatLog.length, 1);
+    assert.match(c.combatLog[0].label, /Cast Ward <new> · Level 3/);
+    assert.equal(a.$('[data-spell-editor]'), null);
+    await a.api.persist();
+    reopened = await app(a.storage);
+    assert.equal(reopened.api.current.usedSlots[2], 1);
+    assert.equal(reopened.api.current.concentrationSpell, 'Ward <new>');
+    reopened.click('[data-action="combat-log"]');
+    reopened.click(
+      '.combat-log [data-action="undo-combat-event"]:not(:disabled)',
+    );
+    assert.equal(reopened.api.current.usedSlots[2], 0);
+    assert.equal(reopened.api.current.concentrationSpell, 'Old ward');
+    assert.deepEqual(
+      Array.from(reopened.api.current.concentrationDamage),
+      [25],
+    );
+  } finally {
+    reopened?.close();
+    a.close();
+  }
+});
+
+test('combat casting uses the original sorted spell index and cantrips spend no slot or unrelated concentration', async () => {
+  const a = await app();
+  try {
+    const c = a.api.blank('Combat cast');
+    const spell = (name, level, concentration = false) => ({
+      name,
+      level,
+      concentration,
+      ritual: false,
+      prepared: false,
+      school: '',
+      time: '1 action',
+      range: '',
+      components: '',
+      duration: '',
+      description: '',
+    });
+    c.spells = [
+      spell('Magic missile', 1),
+      spell('Fire bolt', 0),
+      spell('Guidance', 0, true),
+    ];
+    c.slots[0] = 2;
+    c.concentrationSpell = 'Existing';
+    c.concentrationDamage = [8];
+    a.api.use(c);
+    a.api.setPage('combat');
+    a.click('.combat-spells [data-action="cast-spell"][data-index="1"]');
+    assert.equal(a.$('#cast-slot-level'), null);
+    assert.match(a.$('#cast-preview').textContent, /no spell slot/);
+    await a.submit();
+    assert.equal(c.usedSlots[0], 0);
+    assert.equal(c.concentrationSpell, 'Existing');
+    assert.deepEqual(Array.from(c.concentrationDamage), [8]);
+    assert.ok(a.$('.combat-spells'));
+    a.click('.combat-spells [data-action="cast-spell"][data-index="0"]');
+    await a.submit();
+    assert.equal(c.usedSlots[0], 1);
+    assert.equal(c.concentrationSpell, 'Existing');
+    a.click('.combat-spells [data-action="cast-spell"][data-index="2"]');
+    await a.submit();
+    assert.equal(c.usedSlots[0], 1);
+    assert.equal(c.concentrationSpell, 'Guidance');
+    assert.equal(c.concentrationDamage.length, 0);
+    c.concentrationDamage.push(10);
+    a.click('.combat-spells [data-action="cast-spell"][data-index="2"]');
+    await a.submit();
+    assert.equal(c.concentrationDamage.length, 0);
+  } finally {
+    a.close();
+  }
+});
+
+test('casting refuses exhausted, lower, invalid slots and zero HP without changing state', async () => {
+  const a = await app();
+  try {
+    const c = a.api.blank('Valid casting');
+    c.spells = [
+      {
+        name: 'Level two',
+        level: 2,
+        school: '',
+        time: '',
+        range: '',
+        components: '',
+        duration: '',
+        description: '',
+        concentration: true,
+        ritual: false,
+        prepared: true,
+      },
+    ];
+    c.slots[0] = 2;
+    a.api.use(c);
+    a.api.setPage('spells');
+    a.click('[data-action="cast-spell"]');
+    assert.equal(a.$('#modal button[type="submit"]').disabled, true);
+    assert.match(a.$('#cast-preview').textContent, /No available spell slots/);
+    const before = JSON.stringify(c);
+    await a.submit();
+    assert.equal(a.$('#modal').open, true);
+    assert.equal(JSON.stringify(c), before);
+    a.click('[data-action="close-modal"]');
+    c.slots[1] = 1;
+    a.click('[data-action="cast-spell"]');
+    const validBefore = JSON.stringify(c);
+    for (const level of ['1', '9', '1.5', '']) {
+      await a.submit({ 'slot-level': level });
+      assert.equal(a.$('#modal').open, true);
+      assert.equal(JSON.stringify(c), validBefore);
+    }
+    a.click('[data-action="close-modal"]');
+    c.hp = 0;
+    a.click('[data-action="cast-spell"]');
+    assert.equal(a.$('#modal button[type="submit"]').disabled, true);
+    await a.submit({ 'slot-level': 2 });
+    assert.equal(c.usedSlots[1], 0);
+    assert.equal(c.concentrationSpell, '');
+  } finally {
+    a.close();
+  }
+});
