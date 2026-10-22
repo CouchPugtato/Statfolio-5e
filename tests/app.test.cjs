@@ -10,6 +10,148 @@ const html = fs.readFileSync('index.html', 'utf8');
 const image = 'data:image/png;base64,iVBORw0KGgo=';
 const settle = () => new Promise((resolve) => setTimeout(resolve, 25));
 
+test('level-up drafts can navigate, import and remove spells, and cancel without saving', async () => {
+  const a = await app();
+  try {
+    const c = a.api.blank('Draft Review');
+    a.api.use(c);
+    const before = JSON.stringify(c);
+    const revision = a.api.revision;
+    a.w.fetch = async () => ({
+      ok: true,
+      json: async () =>
+        JSON.parse(fs.readFileSync('assets/reference/spells.json', 'utf8')),
+    });
+    a.click('[data-action="level-up"]');
+    a.input('[data-level-up="dieSides"]', 12);
+    assert.equal(a.$('[data-level-up="hitDice"]').value, '1d8 + 1d12');
+    a.input('[data-level-up="dieResult"]', 9);
+    await a.submit();
+    a.click('[data-action="level-up-reference"]');
+    await settle();
+    a.input('#level-up-spell-search', 'Fireball');
+    assert.equal(a.$('#level-up-reference-select').options.length, 2);
+    a.input('#level-up-reference-select', 'fireball');
+    a.click('[data-action="level-up-add-reference"]');
+    assert.match(a.$('.level-up-spells').textContent, /Fireball/);
+    a.click('[data-action="level-up-remove-spell"]');
+    assert.match(a.$('.level-up-spells').textContent, /No spells/);
+    a.click('[data-action="level-up-back"]');
+    assert.equal(a.$('[data-level-up="dieResult"]').value, '9');
+    await a.submit();
+    await a.submit();
+    a.input('[data-level-up="features"]', 'A new feature');
+    await a.submit();
+    assert.match(a.$('#level-up-stage').textContent, /A new feature/);
+    assert.equal(JSON.stringify(c), before);
+    a.click('#modal [data-action="close-modal"]');
+    assert.equal(JSON.stringify(c), before);
+    assert.equal(a.api.revision, revision);
+  } finally {
+    a.close();
+  }
+});
+
+test('level-up applies HP, retroactive Constitution, hit dice, proficiency, spells and features together and persists', async () => {
+  const a = await app();
+  let reopened;
+  try {
+    const c = a.api.blank('Level Five');
+    Object.assign(c, {
+      level: 4,
+      maxHp: 30,
+      hp: 15,
+      hitDice: '4d8',
+      hitDiceLeft: 2,
+      image,
+      features: 'Old feature',
+    });
+    c.abilities[2] = 14;
+    c.slots[0] = 4;
+    c.usedSlots[0] = 1;
+    a.api.use(c);
+    const history = a.api.state.backupHistory.changesSinceExport;
+    a.click('[data-action="level-up"]');
+    a.input('[data-level-up-ability="2"]', 16);
+    assert.match(a.$('#level-up-hp-preview').textContent, /30\s*→\s*42/);
+    await a.submit();
+    a.input('[data-level-up-slot="2"]', 2);
+    a.click('[data-action="level-up-custom-spell"]');
+    a.input('[data-level-up-spell="0"][data-key="name"]', 'New Magic');
+    a.input('[data-level-up-spell="0"][data-key="level"]', 3);
+    a.input('[data-level-up-spell="0"][data-key="prepared"]', true);
+    await a.submit();
+    a.input('[data-level-up="features"]', 'Old feature\nNew feature');
+    await a.submit();
+    assert.match(a.$('#level-up-stage').textContent, /Proficiency: \+2 → \+3/);
+    await a.submit();
+    assert.equal(a.$('#modal').open, false);
+    assert.equal(c.level, 5);
+    assert.equal(c.maxHp, 42);
+    assert.equal(c.hp, 15);
+    assert.equal(c.hitDice, '5d8');
+    assert.equal(c.hitDiceLeft, 3);
+    assert.equal(c.usedSlots[0], 1);
+    assert.equal(c.slots[2], 2);
+    assert.equal(c.spells[0].prepared, true);
+    assert.equal(c.spells[0].name, 'New Magic');
+    assert.equal(c.features, 'Old feature\nNew feature');
+    assert.equal(c.image, image);
+    assert.equal(a.api.state.backupHistory.changesSinceExport, history + 1);
+    await a.api.persist();
+    reopened = await app(a.storage);
+    assert.deepEqual(
+      JSON.parse(JSON.stringify(reopened.api.current)),
+      JSON.parse(JSON.stringify(c)),
+    );
+  } finally {
+    reopened?.close();
+    a.close();
+  }
+});
+
+test('level-up rejects invalid input and stale reviews, caps at level 20, and can raise current HP', async () => {
+  const a = await app();
+  try {
+    const c = a.api.blank('Validation');
+    c.hp = 4;
+    a.api.use(c);
+    a.click('[data-action="level-up"]');
+    a.input('[data-level-up="dieResult"]', 9);
+    await a.submit();
+    assert.equal(a.$('#level-up-stage-title').textContent, 'HP & Abilities');
+    a.input('[data-level-up="dieResult"]', 5);
+    a.input('[data-level-up="raiseCurrent"]', true);
+    await a.submit();
+    a.input('[data-level-up-slot="0"]', -1);
+    await a.submit();
+    assert.equal(a.$('#level-up-stage-title').textContent, 'Spells');
+    a.input('[data-level-up-slot="0"]', 0);
+    await a.submit();
+    await a.submit();
+    c.hp = 3;
+    await a.submit();
+    assert.equal(a.$('#modal').open, true);
+    assert.match(a.$('#toast').textContent, /changed during the review/);
+    assert.equal(c.level, 1);
+    assert.equal(c.hp, 3);
+    a.click('#modal [data-action="close-modal"]');
+    a.click('[data-action="level-up"]');
+    a.input('[data-level-up="raiseCurrent"]', true);
+    await a.submit();
+    await a.submit();
+    await a.submit();
+    await a.submit();
+    assert.equal(c.hp, 8);
+    assert.equal(c.maxHp, 15);
+    c.level = 20;
+    a.api.shell();
+    assert.equal(a.$('[data-action="level-up"]').disabled, true);
+  } finally {
+    a.close();
+  }
+});
+
 async function app(storage = new IDBFactory()) {
   const dom = new JSDOM(html, {
     url: 'https://example.test/Statfolio-5e/',

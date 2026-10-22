@@ -1905,6 +1905,7 @@ document.addEventListener('keydown', (event) => {
       'related-notes-search',
       'spell-reference-search',
       'equipment-reference-search',
+      'level-up-spell-search',
     ].includes(event.target.id)
   ) {
     event.preventDefault();
@@ -2590,6 +2591,479 @@ function openRestModal(character, type) {
   );
 }
 
+// A level-up is an isolated draft; only the final review writes character data.
+let levelUpSession = null;
+const levelUpSteps = ['HP & Abilities', 'Spells', 'Features', 'Review'];
+const levelUpKeys = [
+  'level',
+  'abilities',
+  'maxHp',
+  'hp',
+  'hitDice',
+  'hitDiceLeft',
+  'slots',
+  'spells',
+  'spellNotes',
+  'features',
+  'class',
+  'subclass',
+];
+
+function levelUpBaseline(character) {
+  return Object.fromEntries(
+    levelUpKeys.map((key) => [key, structuredClone(character[key])]),
+  );
+}
+
+function addLevelHitDie(pool, sides) {
+  const terms = pool.trim().split(/\s*\+\s*/);
+  if (terms.every((term) => /^\d+d(?:6|8|10|12)$/i.test(term))) {
+    const existing = terms.findIndex(
+      (term) => Number(term.split(/d/i)[1]) === sides,
+    );
+    if (existing >= 0)
+      terms[existing] =
+        `${Number(terms[existing].split(/d/i)[0]) + 1}d${sides}`;
+    else terms.push(`1d${sides}`);
+    return terms.join(' + ');
+  }
+  return `${pool.trim()}${pool.trim() ? ' + ' : ''}1d${sides}`;
+}
+
+function levelUpPatch(session) {
+  const { base, draft } = session;
+  const constitution = mod(draft.abilities[2]);
+  const gained =
+    Math.max(1, draft.dieResult + constitution) +
+    base.level * (constitution - mod(base.abilities[2])) +
+    draft.extraHp;
+  const maxHp = base.maxHp + gained;
+  return {
+    level: draft.level,
+    abilities: [...draft.abilities],
+    maxHp,
+    hp: Math.min(
+      maxHp,
+      draft.raiseCurrent ? Math.max(0, base.hp + gained) : base.hp,
+    ),
+    hitDice: draft.hitDice,
+    hitDiceLeft: draft.hitDiceLeft,
+    slots: [...draft.slots],
+    spells: structuredClone(draft.spells),
+    spellNotes: draft.spellNotes,
+    features: draft.features,
+    class: draft.class,
+    subclass: draft.subclass,
+  };
+}
+
+function validateLevelUp(session, step) {
+  const { draft, character } = session;
+  if (step === 0 || step === 3) {
+    if (
+      draft.abilities.some(
+        (value) => !Number.isInteger(value) || value < 1 || value > 30,
+      ) ||
+      ![6, 8, 10, 12].includes(draft.dieSides) ||
+      !Number.isInteger(draft.dieResult) ||
+      draft.dieResult < 1 ||
+      draft.dieResult > draft.dieSides ||
+      !Number.isSafeInteger(draft.extraHp) ||
+      !Number.isSafeInteger(draft.hitDiceLeft) ||
+      draft.hitDiceLeft < 0 ||
+      !draft.hitDice.trim()
+    )
+      throw Error(
+        'Check the ability scores, hit die result, and hit dice fields.',
+      );
+    const patch = levelUpPatch(session);
+    if (!Number.isSafeInteger(patch.maxHp) || patch.maxHp < 1)
+      throw Error('Maximum HP must be a positive whole number.');
+  }
+  if (step === 1 || step === 3) {
+    if (
+      draft.slots.some(
+        (value, index) =>
+          !Number.isInteger(value) ||
+          value < character.usedSlots[index] ||
+          value > 20,
+      )
+    )
+      throw Error(
+        'Slot totals must be whole numbers from 0 to 20, and cannot be below slots already used.',
+      );
+    if (
+      draft.spells.some(
+        (spell) =>
+          !Number.isInteger(spell.level) || spell.level < 0 || spell.level > 9,
+      )
+    )
+      throw Error('Spell levels must be whole numbers from 0 to 9.');
+  }
+}
+
+function levelUpField(label, key, value, type = 'text', extra = '') {
+  return /* HTML */ `<label class="field"
+    ><span>${label}</span
+    ><input
+      data-level-up="${key}"
+      type="${type}"
+      value="${esc(value)}"
+      ${extra}
+  /></label>`;
+}
+
+function levelUpHealthPreview(session) {
+  const patch = levelUpPatch(session);
+  const gain = patch.maxHp - session.base.maxHp;
+  return /* HTML */ `<span
+      >Maximum HP:
+      <strong
+        >${session.base.maxHp} →
+        ${Number.isFinite(patch.maxHp) ? patch.maxHp : '—'}</strong
+      ></span
+    ><span
+      >Current HP:
+      <strong
+        >${session.base.hp} →
+        ${Number.isFinite(patch.hp) ? patch.hp : '—'}</strong
+      ></span
+    ><small
+      >HP change: ${Number.isFinite(gain) ? sign(gain) : '—'}. Includes the new
+      hit die, Constitution changes for prior levels, and your extra
+      adjustment.</small
+    >`;
+}
+
+function levelUpHealthStage(session) {
+  const { draft } = session;
+  return /* HTML */ `<p class="help"
+      >Review ability increases and choose the hit die gained. The die result
+      defaults to its average; enter your roll if you roll HP.</p
+    ><div class="level-up-abilities"
+      >${abilities.map((ability, index) => /* HTML */ `<label><span>${ability}</span><input type="number" min="1" max="30" data-level-up-ability="${index}" value="${draft.abilities[index]}" /></label>`).join('')}</div
+    ><div class="form-grid"
+      ><label class="field"
+        ><span>New Hit Die</span
+        ><select data-level-up="dieSides"
+          >${[6, 8, 10, 12].map((sides) => /* HTML */ `<option value="${sides}" ${draft.dieSides === sides ? 'selected' : ''}>d${sides}</option>`).join('')}</select
+        ></label
+      >${levelUpField('Hit Die Result', 'dieResult', draft.dieResult, 'number', `min="1" max="${draft.dieSides}"`)}${levelUpField('Extra HP Adjustment', 'extraHp', draft.extraHp, 'number')}${levelUpField('Hit Dice After Level Up', 'hitDice', draft.hitDice)}${levelUpField('Hit Dice Remaining', 'hitDiceLeft', draft.hitDiceLeft, 'number', 'min="0"')}</div
+    ><label class="check"
+      ><input
+        type="checkbox"
+        data-level-up="raiseCurrent"
+        ${draft.raiseCurrent ? 'checked' : ''}
+      />
+      Increase current HP by the same amount</label
+    ><div id="level-up-hp-preview" class="level-up-summary"
+      >${levelUpHealthPreview(session)}</div
+    >`;
+}
+
+function levelUpSpellRows(session) {
+  return (
+    session.draft.spells
+      .map(
+        (spell, index) =>
+          /* HTML */ `<div class="level-up-spell-row"
+            ><details
+              ><summary
+                >${esc(spell.name || 'Unnamed Spell')} ·
+                ${spell.level === 0 ? 'Cantrip' : `Level ${spell.level}`}</summary
+              ><div class="level-up-spell-fields"
+                ><label class="field"
+                  ><span>Name</span
+                  ><input
+                    data-level-up-spell="${index}"
+                    data-key="name"
+                    value="${esc(spell.name)}" /></label
+                ><label class="field"
+                  ><span>Level</span
+                  ><input
+                    type="number"
+                    min="0"
+                    max="9"
+                    data-level-up-spell="${index}"
+                    data-key="level"
+                    value="${spell.level}" /></label
+                ><label class="check"
+                  ><input
+                    type="checkbox"
+                    data-level-up-spell="${index}"
+                    data-key="prepared"
+                    ${spell.prepared ? 'checked' : ''}
+                  />
+                  Prepared</label
+                ><label class="field"
+                  ><span>Description</span
+                  ><textarea
+                    data-level-up-spell="${index}"
+                    data-key="description"
+                  >
+${esc(spell.description)}</textarea>
+                </label></div
+              ></details
+            >${button('level-up-remove-spell', '×', 'icon-button', `data-index="${index}" aria-label="Remove ${esc(spell.name || 'spell')} from level-up draft"`)}</div
+          >`,
+      )
+      .join('') || '<p class="muted">No spells in this draft.</p>'
+  );
+}
+
+function levelUpSpellsStage(session) {
+  const { draft } = session;
+  return /* HTML */ `<p class="help"
+      >Enter slot totals from your class table. Already used slots stay spent.
+      Add, replace, or prepare spells for this level.</p
+    ><div class="level-up-slot-grid"
+      >${draft.slots.map((value, index) => /* HTML */ `<label class="field"><span>Level ${index + 1}</span><input type="number" min="${session.character.usedSlots[index]}" max="20" data-level-up-slot="${index}" value="${value}" /></label>`).join('')}</div
+    ><div class="level-up-spell-tools"
+      >${button('level-up-reference', 'Browse SRD Spells', 'secondary compact-button')}${button('level-up-custom-spell', 'Add Custom Spell', 'secondary compact-button')}</div
+    >${session.referenceLoaded ? '<div class="level-up-reference"><input type="search" id="level-up-spell-search" placeholder="Search reference spells…" aria-label="Search level-up spell reference" /><select id="level-up-reference-select" aria-label="Choose reference spell"></select>' + button('level-up-add-reference', 'Add Spell', 'secondary compact-button') + '</div>' : ''}<div
+      class="level-up-spells"
+      >${levelUpSpellRows(session)}</div
+    ><label class="field"
+      ><span>Spellcasting Notes</span
+      ><textarea data-level-up="spellNotes">${esc(draft.spellNotes)}</textarea>
+    </label>`;
+}
+
+function levelUpReview(session) {
+  const { base, draft } = session;
+  const patch = levelUpPatch(session);
+  const lines = [
+    `Level: ${base.level} → ${patch.level}`,
+    `Proficiency: ${sign(prof(base))} → ${sign(prof(patch))}`,
+    `Maximum HP: ${base.maxHp} → ${patch.maxHp}`,
+    `Current HP: ${base.hp} → ${patch.hp}`,
+    `Hit dice: ${base.hitDice} → ${patch.hitDice}`,
+    `Hit dice remaining: ${base.hitDiceLeft} → ${patch.hitDiceLeft}`,
+  ];
+  abilities.forEach((ability, index) => {
+    if (base.abilities[index] !== draft.abilities[index])
+      lines.push(
+        `${ability}: ${base.abilities[index]} → ${draft.abilities[index]}`,
+      );
+  });
+  draft.slots.forEach((value, index) => {
+    if (base.slots[index] !== value)
+      lines.push(
+        `Level ${index + 1} slot total: ${base.slots[index]} → ${value}`,
+      );
+  });
+  if (base.class !== draft.class)
+    lines.push(`Class: ${base.class || 'None'} → ${draft.class || 'None'}`);
+  if (base.subclass !== draft.subclass)
+    lines.push(
+      `Subclass: ${base.subclass || 'None'} → ${draft.subclass || 'None'}`,
+    );
+  return /* HTML */ `<div class="rest-preview"
+      ><h3>Changes to Apply</h3
+      ><ul
+        >${lines.map((line) => /* HTML */ `<li>${esc(line)}</li>`).join('')}</ul
+      ></div
+    ><details class="level-up-review-details"
+      ><summary>Spells: ${base.spells.length} → ${draft.spells.length}</summary
+      ><p class="help"
+        >Before:
+        ${esc(base.spells.map((spell) => spell.name || 'Unnamed Spell').join(', ') || 'None')}</p
+      >${draft.spells.map((spell) => /* HTML */ `<div><strong>${esc(spell.name || 'Unnamed Spell')} · ${spell.level === 0 ? 'Cantrip' : `Level ${spell.level}`}${spell.prepared ? ' · Prepared' : ''}</strong><p>${esc(spell.description)}</p></div>`).join('')}</details
+    >${base.features !== draft.features ? /* HTML */ `<section class="level-up-review-details"><h3>Features After Level Up</h3><p>${esc(draft.features || 'None')}</p></section>` : '<p class="help">Features unchanged.</p>'}${base.spellNotes !== draft.spellNotes ? /* HTML */ `<section class="level-up-review-details"><h3>Spellcasting Notes After Level Up</h3><p>${esc(draft.spellNotes || 'None')}</p></section>` : ''}`;
+}
+
+function renderLevelUpStep() {
+  const session = levelUpSession;
+  if (!session) return;
+  const { draft, step } = session;
+  $('#level-up-progress').textContent =
+    `Level ${session.base.level} → ${draft.level} · Proficiency ${sign(prof(session.base))} → ${sign(prof(draft))} · ${step + 1} of 4`;
+  $('#level-up-stage-title').textContent = levelUpSteps[step];
+  $('#level-up-stage').innerHTML =
+    step === 0
+      ? levelUpHealthStage(session)
+      : step === 1
+        ? levelUpSpellsStage(session)
+        : step === 2
+          ? /* HTML */ `<p class="help"
+                >Review your class and subclass choices and record new features,
+                feats, or other changes. Adjust limited actions and resources on
+                Combat as needed.</p
+              ><div class="form-grid"
+                >${levelUpField('Class', 'class', draft.class)}${levelUpField('Subclass', 'subclass', draft.subclass)}</div
+              ><label class="field"
+                ><span>Features, Feats & Traits</span
+                ><textarea data-level-up="features">
+${esc(draft.features)}</textarea>
+              </label>`
+          : levelUpReview(session);
+  $('#level-up-back').disabled = step === 0;
+  $('#modal button[type="submit"]').textContent =
+    step === 3 ? 'Apply Level Up' : 'Next';
+  if ($('#level-up-reference-select')) filterLevelUpReference();
+  growTextAreas($('#level-up-stage'));
+  $('.level-up-wizard').scrollTop = 0;
+}
+
+function filterLevelUpReference() {
+  const query = $('#level-up-spell-search').value.trim().toLocaleLowerCase();
+  const matches = spellReference.filter((spell) =>
+    spell.name.toLocaleLowerCase().includes(query),
+  );
+  $('#level-up-reference-select').innerHTML =
+    matches
+      .map(
+        (spell) =>
+          /* HTML */ `<option value="${esc(spell.id)}"
+            >${esc(spell.name)} ·
+            ${spell.level === 0 ? 'Cantrip' : `Level ${spell.level}`}</option
+          >`,
+      )
+      .join('') || '<option value="">No matching spells</option>';
+}
+
+function handleLevelUpInput(element) {
+  const session = levelUpSession;
+  if (!session) return;
+  const { draft } = session;
+  const value =
+    element.type === 'checkbox'
+      ? element.checked
+      : element.type === 'number' || element.dataset.levelUp === 'dieSides'
+        ? element.value === ''
+          ? NaN
+          : Number(element.value)
+        : element.value;
+  if (element.id === 'level-up-spell-search') {
+    filterLevelUpReference();
+    return;
+  }
+  if (element.dataset.levelUpAbility !== undefined)
+    draft.abilities[Number(element.dataset.levelUpAbility)] = value;
+  else if (element.dataset.levelUpSlot !== undefined)
+    draft.slots[Number(element.dataset.levelUpSlot)] = value;
+  else if (element.dataset.levelUpSpell !== undefined) {
+    const spell = draft.spells[Number(element.dataset.levelUpSpell)];
+    if (
+      ['name', 'level', 'description', 'prepared'].includes(element.dataset.key)
+    )
+      spell[element.dataset.key] = value;
+    element
+      .closest('.level-up-spell-row')
+      .querySelector('summary').textContent =
+      `${spell.name || 'Unnamed Spell'} · ${spell.level === 0 ? 'Cantrip' : `Level ${spell.level}`}`;
+  } else if (
+    [
+      'dieSides',
+      'dieResult',
+      'extraHp',
+      'hitDice',
+      'hitDiceLeft',
+      'raiseCurrent',
+      'spellNotes',
+      'features',
+      'class',
+      'subclass',
+    ].includes(element.dataset.levelUp)
+  ) {
+    draft[element.dataset.levelUp] = value;
+    if (element.dataset.levelUp === 'hitDice') session.poolEdited = true;
+    if (element.dataset.levelUp === 'dieSides') {
+      draft.dieResult = draft.dieSides / 2 + 1;
+      if (!session.poolEdited)
+        draft.hitDice = addLevelHitDie(session.base.hitDice, draft.dieSides);
+      $('[data-level-up="dieResult"]').value = draft.dieResult;
+      $('[data-level-up="dieResult"]').max = draft.dieSides;
+      $('[data-level-up="hitDice"]').value = draft.hitDice;
+    }
+  }
+  if ($('#level-up-hp-preview'))
+    $('#level-up-hp-preview').innerHTML = levelUpHealthPreview(session);
+}
+
+function openLevelUp(character) {
+  if (character.level >= 20) {
+    toast('This character is already level 20.');
+    return;
+  }
+  const base = levelUpBaseline(character);
+  const sides = Number(
+    [...character.hitDice.matchAll(/d(6|8|10|12)/gi)].at(-1)?.[1] || 8,
+  );
+  levelUpSession = {
+    character,
+    base,
+    step: 0,
+    poolEdited: false,
+    referenceLoaded: false,
+    draft: {
+      ...structuredClone(base),
+      level: character.level + 1,
+      dieSides: sides,
+      dieResult: sides / 2 + 1,
+      extraHp: 0,
+      raiseCurrent: false,
+      hitDice: addLevelHitDie(character.hitDice, sides),
+      hitDiceLeft: character.hitDiceLeft + 1,
+    },
+  };
+  modal(
+    'Level-Up Review',
+    '<div class="level-up-wizard" tabindex="-1"><p id="level-up-progress" class="help"></p><h3 id="level-up-stage-title"></h3><div id="level-up-stage"></div></div>',
+    () => {
+      const session = levelUpSession;
+      if (!session || session.step !== 3 || current() !== character)
+        throw Error('Complete the review before applying changes.');
+      if (
+        JSON.stringify(levelUpBaseline(character)) !==
+        JSON.stringify(session.base)
+      )
+        throw Error(
+          'The character changed during the review. Cancel and reopen Level Up to review the latest values.',
+        );
+      validateLevelUp(session, 3);
+      const patch = levelUpPatch(session);
+      validateBackup({
+        format: 'statfolio',
+        version: 1,
+        characters: [{ ...character, ...patch }],
+      });
+      Object.assign(character, patch);
+      editingSpell = null;
+      levelUpSession = null;
+      changed();
+      renderCharacter();
+      toast(`Advanced to level ${character.level}.`);
+    },
+    'Next',
+  );
+  const form = $('#modal-form');
+  const apply = form.onsubmit;
+  form.onsubmit = async (event) => {
+    const session = levelUpSession;
+    if (session && session.step < 3) {
+      event.preventDefault();
+      try {
+        validateLevelUp(session, session.step);
+        session.step++;
+        renderLevelUpStep();
+      } catch (error) {
+        toast(error.message);
+      }
+      return;
+    }
+    return apply(event);
+  };
+  const back = document.createElement('button');
+  back.type = 'button';
+  back.id = 'level-up-back';
+  back.className = 'secondary';
+  back.dataset.action = 'level-up-back';
+  back.textContent = 'Back';
+  $('.modal-actions').insertBefore(back, $('#modal button[type="submit"]'));
+  renderLevelUpStep();
+}
+
 function characterDetails() {
   const fields = [
     field('Character Name', 'name'),
@@ -2611,7 +3085,7 @@ const views = {
   overview: (c) =>
     /* HTML */ `<div class="sheet-grid overview-grid"
       ><div
-        >${panel('Ability Scores', abilityTiles(c), '<span class="muted">Modifiers calculated automatically</span>')}${panel('Character Details', characterDetails())}${characterActions()}</div
+        >${panel('Ability Scores', abilityTiles(c), '<span class="muted">Modifiers calculated automatically</span>')}${panel('Character Details', characterDetails(), button('level-up', 'Level Up', 'secondary compact-button', c.level >= 20 ? 'disabled title="Maximum Level Reached"' : ''))}${characterActions()}</div
       ><div
         >${panel(
           'Reference Stats',
@@ -3583,7 +4057,76 @@ document.addEventListener('click', async (e) => {
       break;
 
     case 'close-modal':
+      levelUpSession = null;
       $('#modal').close();
+      break;
+
+    case 'level-up':
+      openLevelUp(c);
+      break;
+
+    case 'level-up-back':
+      if (levelUpSession?.step > 0) {
+        levelUpSession.step--;
+        renderLevelUpStep();
+      }
+      break;
+
+    case 'level-up-reference': {
+      const session = levelUpSession;
+      btn.disabled = true;
+      try {
+        await loadSpellReference();
+        if (session === levelUpSession && $('#modal').open) {
+          session.referenceLoaded = true;
+          renderLevelUpStep();
+        }
+      } catch (error) {
+        toast(error.message);
+      } finally {
+        btn.disabled = false;
+      }
+      break;
+    }
+
+    case 'level-up-add-reference': {
+      const reference = spellReference.find(
+        (spell) => spell.id === $('#level-up-reference-select')?.value,
+      );
+      if (!levelUpSession || !reference) break;
+      const { id, ...fields } = reference;
+      levelUpSession.draft.spells.push({
+        ...structuredClone(fields),
+        prepared: false,
+        actionType: castingActionType(fields.time),
+      });
+      renderLevelUpStep();
+      break;
+    }
+
+    case 'level-up-custom-spell':
+      if (!levelUpSession) break;
+      levelUpSession.draft.spells.push({
+        name: 'New Spell',
+        level: 0,
+        school: '',
+        time: '',
+        range: '',
+        components: '',
+        duration: '',
+        description: '',
+        prepared: false,
+        concentration: false,
+        ritual: false,
+        actionType: '',
+      });
+      renderLevelUpStep();
+      break;
+
+    case 'level-up-remove-spell':
+      if (!levelUpSession) break;
+      levelUpSession.draft.spells.splice(Number(btn.dataset.index), 1);
+      renderLevelUpStep();
       break;
 
     case 'portrait':
@@ -4124,6 +4667,10 @@ document.addEventListener('input', (e) => {
     return;
   }
   if (!c) return;
+  if (el.closest('.level-up-wizard')) {
+    handleLevelUpInput(el);
+    return;
+  }
   if (el.dataset.attackUseLimit !== undefined) {
     const attack = c.attacks[Number(el.dataset.attackUseLimit)];
     const raw = el.value.trim();
