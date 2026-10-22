@@ -3599,3 +3599,163 @@ test('casting refuses exhausted, lower, invalid slots and zero HP without changi
     a.close();
   }
 });
+
+test('attack use limits are optional, show remaining uses only when configured, and survive editing and save', async () => {
+  const a = await app();
+  let reopened;
+  try {
+    const c = a.api.blank('Action uses');
+    a.api.use(c);
+    a.api.setPage('combat');
+    a.click('[data-action="add-attack"]');
+    a.input('[data-field="attacks.0.name"]', 'Second Wind');
+    a.click('[data-action="finish-attack"]');
+    assert.doesNotMatch(a.$('.attack-summary').textContent, /Uses/);
+    a.click('[data-action="use-attack"]');
+    const before = JSON.stringify(c);
+    assert.equal(a.$('.cast-popup .rest-preview'), null);
+    a.click('[data-action="close-modal"]');
+    assert.equal(JSON.stringify(c), before);
+    a.click('.attack-summary');
+    a.input('[data-attack-use-limit="0"]', '2');
+    a.input('[data-field="attacks.0.recovery"]', 'short');
+    a.click('[data-action="finish-attack"]');
+    assert.match(
+      a.$('.attack-summary').textContent,
+      /Uses2\/2 · Short or Long Rest/,
+    );
+    a.click('[data-action="use-attack"]');
+    await a.submit();
+    assert.equal(c.attacks[0].usesSpent, 1);
+    assert.match(a.$('.attack-summary').textContent, /Uses1\/2/);
+    assert.equal(c.combatLog[0].label, 'Use Second Wind');
+    a.click('[data-action="use-attack"]');
+    await a.submit();
+    assert.equal(c.attacks[0].usesSpent, 2);
+    a.click('[data-action="use-attack"]');
+    assert.equal(a.$('#modal button[type="submit"]').disabled, true);
+    await a.submit();
+    assert.equal(c.attacks[0].usesSpent, 2);
+    a.click('[data-action="close-modal"]');
+    a.click('[data-action="combat-log"]');
+    a.click('.combat-log [data-action="undo-combat-event"]:not(:disabled)');
+    assert.equal(c.attacks[0].usesSpent, 1);
+    a.click('[data-action="close-modal"]');
+    await a.api.persist();
+    reopened = await app(a.storage);
+    assert.equal(reopened.api.current.attacks[0].useLimit, 2);
+    assert.equal(reopened.api.current.attacks[0].usesSpent, 1);
+    assert.equal(reopened.api.current.attacks[0].recovery, 'short');
+    a.click('.attack-summary');
+    a.input('[data-attack-use-limit="0"]', '');
+    a.click('[data-action="finish-attack"]');
+    assert.doesNotMatch(a.$('.attack-summary').textContent, /Uses/);
+    assert.equal(c.attacks[0].usesSpent, 0);
+  } finally {
+    reopened?.close();
+    a.close();
+  }
+});
+
+test('limited actions recover on their selected rest and rest undo restores spent uses', async () => {
+  const a = await app();
+  try {
+    const c = a.api.blank('Action recovery');
+    const attack = (name, recovery, usesSpent) => ({
+      name,
+      bonus: '',
+      damage: '',
+      type: '',
+      notes: '',
+      useLimit: 2,
+      usesSpent,
+      recovery,
+    });
+    c.attacks = [
+      attack('Short', 'short', 2),
+      attack('Long', 'long', 1),
+      attack('Manual', '', 2),
+      { name: 'Unlimited', bonus: '', damage: '', type: '', notes: '' },
+    ];
+    a.api.use(c);
+    a.click('[data-action="short-rest"]');
+    assert.match(a.$('#rest-preview').textContent, /Short uses: 0\/2 → 2\/2/);
+    assert.doesNotMatch(a.$('#rest-preview').textContent, /Long uses/);
+    await a.submit();
+    assert.deepEqual(
+      c.attacks.slice(0, 3).map((item) => item.usesSpent),
+      [0, 1, 2],
+    );
+    a.click('[data-action="combat-log"]');
+    a.click('.combat-log [data-action="undo-combat-event"]:not(:disabled)');
+    assert.equal(c.attacks[0].usesSpent, 2);
+    a.click('[data-action="close-modal"]');
+    a.click('[data-action="rest"]');
+    await a.submit();
+    assert.deepEqual(
+      c.attacks.slice(0, 3).map((item) => item.usesSpent),
+      [0, 0, 2],
+    );
+    a.click('[data-action="combat-log"]');
+    a.click('.combat-log [data-action="undo-combat-event"]:not(:disabled)');
+    assert.deepEqual(
+      c.attacks.slice(0, 3).map((item) => item.usesSpent),
+      [2, 1, 2],
+    );
+  } finally {
+    a.close();
+  }
+});
+
+test('attack counters reject invalid limits, validate backups, and retain stable identity for undo', async () => {
+  const a = await app();
+  try {
+    const c = a.api.blank('Safe action counters');
+    c.attacks = [
+      { name: 'Action', bonus: '', damage: '', type: '', notes: '' },
+    ];
+    a.api.use(c);
+    a.api.setPage('combat');
+    a.click('.attack-summary');
+    for (const limit of ['0', '-1', '2.5', 'bad']) {
+      a.input('[data-attack-use-limit="0"]', limit);
+      assert.equal(c.attacks[0].useLimit, undefined);
+    }
+    a.input('[data-attack-use-limit="0"]', '3');
+    a.input('[data-field="attacks.0.usesSpent"]', 1);
+    assert.match(c.combatLog[0].label, /spent 1/);
+    a.click('[data-action="finish-attack"]');
+    c.attacks.unshift({
+      name: 'Other',
+      bonus: '',
+      damage: '',
+      type: '',
+      notes: '',
+    });
+    a.api.setPage('combat');
+    a.click('[data-action="combat-log"]');
+    a.click('.combat-log [data-action="undo-combat-event"]:not(:disabled)');
+    assert.equal(c.attacks[1].usesSpent, 0);
+    const backup = () => ({ format: 'statfolio', version: 1, characters: [c] });
+    assert.equal(a.api.validateBackup(backup())[0].attacks[1].useLimit, 3);
+    c.attacks[1].useLimit = -1;
+    assert.throws(
+      () => a.api.validateBackup(backup()),
+      /Invalid attack use limit/,
+    );
+    c.attacks[1].useLimit = 3;
+    c.attacks[1].usesSpent = 4;
+    assert.throws(
+      () => a.api.validateBackup(backup()),
+      /Invalid attack uses spent/,
+    );
+    c.attacks[1].usesSpent = 0;
+    c.attacks[1].recovery = 'invalid';
+    assert.throws(
+      () => a.api.validateBackup(backup()),
+      /Invalid attack recovery/,
+    );
+  } finally {
+    a.close();
+  }
+});

@@ -977,6 +977,12 @@ function combatTarget(character, target) {
     return { object: character, key: target };
   const slot = target.match(/^usedSlots\.([0-8])$/);
   if (slot) return { object: character.usedSlots, key: Number(slot[1]) };
+  if (target.startsWith('attack:')) {
+    const attack = character.attacks.find(
+      (entry) => entry.id === target.slice(7),
+    );
+    if (attack) return { object: attack, key: 'usesSpent' };
+  }
   if (target.startsWith('resource:')) {
     const resource = character.resources.find(
       (entry) => entry.id === target.slice(9),
@@ -1030,6 +1036,13 @@ function combatUndoReason(character, entry) {
         JSON.stringify(change.after)
     )
       return 'Values have changed since this entry.';
+    if (change.target.startsWith('attack:')) {
+      const attack = character.attacks.find(
+        (item) => item.id === change.target.slice(7),
+      );
+      if (!attackHasUses(attack) || change.before > attack.useLimit)
+        return 'The use limit has changed since this entry.';
+    }
     if (change.target === 'hp' && change.before > character.maxHp)
       return 'Previous HP exceeds the current maximum.';
     if (
@@ -1060,7 +1073,9 @@ function combatChangeText(change) {
     labels[change.target] ||
     (change.target.startsWith('usedSlots.')
       ? `Level ${Number(change.target.split('.')[1]) + 1} slots used`
-      : 'Remaining');
+      : change.target.startsWith('attack:')
+        ? 'Uses Spent'
+        : 'Remaining');
   const value = (item) =>
     Array.isArray(item)
       ? String(item.length)
@@ -1115,6 +1130,19 @@ function trackCombatFieldInput(character, element) {
   const path = element.dataset.field;
   let target;
   let label;
+  const attackMatch = path.match(/^attacks\.(\d+)\.usesSpent$/);
+  if (attackMatch) {
+    const attack = character.attacks[Number(attackMatch[1])];
+    if (!attackHasUses(attack)) return;
+    attack.id ||= uid();
+    attack.usesSpent ||= 0;
+    pendingCombatEdits.set(element, {
+      character,
+      label: attack.name || 'Attack / Action',
+      snapshot: combatSnapshot(character, [`attack:${attack.id}`]),
+    });
+    return;
+  }
   const resourceMatch = path.match(/^resources\.(\d+)\.remaining$/);
   if (resourceMatch) {
     const resource = character.resources[Number(resourceMatch[1])];
@@ -1145,7 +1173,8 @@ function commitCombatField(element) {
   if (!location) return;
   const delta = location.object[location.key] - snapshot[0].before;
   const slots = snapshot[0].target.startsWith('usedSlots.');
-  const spent = slots ? delta > 0 : delta < 0;
+  const spent =
+    slots || snapshot[0].target.startsWith('attack:') ? delta > 0 : delta < 0;
   recordCombatEvent(
     character,
     `${label}: ${spent ? 'spent' : 'restored'} ${Math.abs(delta)}`,
@@ -1172,7 +1201,8 @@ function validCombatValue(target, value) {
       target,
     ) &&
     !/^usedSlots\.[0-8]$/.test(target) &&
-    !/^resource:[a-zA-Z0-9_-]{1,100}$/.test(target)
+    !/^resource:[a-zA-Z0-9_-]{1,100}$/.test(target) &&
+    !/^attack:[a-zA-Z0-9_-]{1,100}$/.test(target)
   )
     return false;
   const max = target.startsWith('usedSlots.')
@@ -1470,6 +1500,63 @@ function actionTypeField(path, entry) {
   return `<label class="field"><span>Action Type</span><select data-field="${path}.actionType">${actionTypes.map((type) => `<option value="${type}" ${type === selected ? 'selected' : ''}>${type || 'Not set'}</option>`).join('')}</select></label>`;
 }
 
+function attackHasUses(attack) {
+  return Number.isSafeInteger(attack.useLimit) && attack.useLimit > 0;
+}
+
+function attackUsesRemaining(attack) {
+  return Math.max(0, attack.useLimit - (attack.usesSpent || 0));
+}
+
+function attackUseFields(attack, index) {
+  return `<div class="form-grid three"><label class="field"><span>Uses per Rest</span><input type="text" inputmode="numeric" pattern="[0-9]*" placeholder="Unlimited" data-attack-use-limit="${index}" value="${esc(attack.useLimit ?? '')}" /></label><label class="field"><span>Resets On</span><select data-field="attacks.${index}.recovery">${[
+    ['', 'Manual'],
+    ['short', 'Short or Long Rest'],
+    ['long', 'Long Rest'],
+  ]
+    .map(
+      ([value, label]) =>
+        `<option value="${value}" ${(attack.recovery || '') === value ? 'selected' : ''}>${label}</option>`,
+    )
+    .join(
+      '',
+    )}</select></label><label class="field"><span>Uses Spent</span><input type="number" min="0" max="${attackHasUses(attack) ? attack.useLimit : 0}" value="${attack.usesSpent || 0}" data-field="attacks.${index}.usesSpent" /></label></div>`;
+}
+
+function openUseAttackModal(character, index) {
+  const attack = character.attacks[index];
+  if (!attack) return;
+  const limited = attackHasUses(attack);
+  modal(
+    'Use Attack / Action',
+    `<div class="cast-popup"><h3>${esc(attack.name.trim() || 'Unnamed Attack')}</h3>${limited ? `<section class="rest-preview"><h3>Uses</h3><p>${attackUsesRemaining(attack)}/${attack.useLimit} remaining${attack.recovery ? ` · ${attack.recovery === 'short' ? 'Short or Long' : 'Long'} Rest` : ''}. This spends one use.</p></section>` : '<p class="help">No use limit is set.</p>'}</div>`,
+    () => {
+      if (!character.attacks.includes(attack))
+        throw Error('This attack or action is no longer on your sheet.');
+      if (character.hp === 0)
+        throw Error('Recover hit points before using an attack or action.');
+      if (attackHasUses(attack)) {
+        if (attackUsesRemaining(attack) < 1) throw Error('No uses remaining.');
+        attack.id ||= uid();
+        attack.usesSpent ||= 0;
+        const before = combatSnapshot(character, [`attack:${attack.id}`]);
+        attack.usesSpent++;
+        recordCombatEvent(
+          character,
+          `Use ${attack.name || 'Unnamed Attack'}`,
+          before,
+        );
+        changed();
+      }
+      renderCharacter();
+      toast(`${attack.name || 'Attack / action'} used.`);
+    },
+    'Use',
+  );
+  $('#modal button[type="submit"]').disabled =
+    (limited && attackUsesRemaining(attack) === 0) || character.hp === 0;
+}
+
 function attackRecords(c) {
   if (!c.attacks.length)
     return '<p class="muted">Add your weapons, attacks, and special actions.</p>';
@@ -1491,6 +1578,7 @@ function attackRecords(c) {
               ${field('Type / Range', `attacks.${index}.type`)}
             </div>
             ${actionTypeField(`attacks.${index}`, attack)}
+            ${attackUseFields(attack, index)}
             ${area('Notes', `attacks.${index}.notes`)}
             <div class="attack-editor-actions"
               >${button('finish-attack', 'Done', 'secondary')}</div
@@ -1502,6 +1590,12 @@ function attackRecords(c) {
           ['Attack', attack.bonus],
           ['Damage', attack.damage],
           ['Type / Range', attack.type],
+          [
+            'Uses',
+            attackHasUses(attack)
+              ? `${attackUsesRemaining(attack)}/${attack.useLimit}${attack.recovery ? ` · ${attack.recovery === 'short' ? 'Short or Long' : 'Long'} Rest` : ''}`
+              : '',
+          ],
         ]
           .filter(([, value]) => value.trim())
           .map(
@@ -1511,19 +1605,23 @@ function attackRecords(c) {
               >`,
           )
           .join('');
-        return /* HTML */ `<button
-          class="attack-summary"
-          data-action="edit-attack"
-          data-index="${index}"
-          aria-label="Edit ${esc(attack.name || 'unnamed attack')}"
-        >
-          <span class="attack-summary-heading"
-            ><strong>${esc(attack.name.trim() || 'Unnamed attack')}</strong
-            ><span class="attack-edit-label">Edit</span></span
+        return /* HTML */ `<div class="spell-card attack-card"
+          ><button
+            class="attack-summary"
+            data-action="edit-attack"
+            data-index="${index}"
+            aria-label="Edit ${esc(attack.name || 'unnamed attack')}"
           >
-          ${details ? /* HTML */ `<span class="attack-summary-stats">${details}</span>` : '<span class="muted">Click to add attack details.</span>'}
-          ${attack.notes.trim() ? /* HTML */ `<span class="attack-summary-notes">${esc(attack.notes)}</span>` : ''}
-        </button>`;
+            <span class="attack-summary-heading"
+              ><strong>${esc(attack.name.trim() || 'Unnamed attack')}</strong
+              ><span class="attack-edit-label">Edit</span></span
+            >
+            ${details ? /* HTML */ `<span class="attack-summary-stats">${details}</span>` : '<span class="muted">Click to add attack details.</span>'}
+            ${attack.notes.trim() ? /* HTML */ `<span class="attack-summary-notes">${esc(attack.notes)}</span>` : ''} </button
+          ><div class="spell-card-actions"
+            >${button('use-attack', 'Use', 'secondary cast-button', `data-index="${index}" aria-label="Use ${esc(attack.name || 'attack / action')}"`)}</div
+          ></div
+        >`;
       })
       .join('')}</div
   >`;
@@ -2262,6 +2360,15 @@ function restResources(character, type) {
   );
 }
 
+function restAttacks(character, type) {
+  return character.attacks.filter(
+    (attack) =>
+      attackHasUses(attack) &&
+      (attack.recovery === 'short' ||
+        (type === 'long' && attack.recovery === 'long')),
+  );
+}
+
 function restPreview(character, type, dice, healing, reduceExhaustion) {
   const changes =
     type === 'long'
@@ -2279,6 +2386,10 @@ function restPreview(character, type, dice, healing, reduceExhaustion) {
   for (const resource of restResources(character, type))
     changes.push(
       `${resource.name || 'Resource'}: ${resource.remaining} → ${Math.max(resource.remaining, resource.max)}`,
+    );
+  for (const attack of restAttacks(character, type))
+    changes.push(
+      `${attack.name || 'Attack / action'} uses: ${attackUsesRemaining(attack)}/${attack.useLimit} → ${attack.useLimit}/${attack.useLimit}`,
     );
   if (reduceExhaustion)
     changes.push(
@@ -2321,8 +2432,8 @@ function openRestModal(character, type) {
         >${restPreview(character, type, defaultDice, 0, false)}</div
       ></section
     ><p class="help"
-      >Resources recover according to their reset setting. Other effects can be
-      adjusted manually.</p
+      >Limited actions and resources recover according to their reset setting.
+      Other effects can be adjusted manually.</p
     ></div
   >`;
   modal(
@@ -2347,6 +2458,11 @@ function openRestModal(character, type) {
         throw Error(
           'Enter valid hit dice and healing amounts. Healing requires spending hit dice.',
         );
+      const attacks = restAttacks(character, type);
+      for (const attack of attacks) {
+        attack.id ||= uid();
+        attack.usesSpent ||= 0;
+      }
       const resources = restResources(character, type);
       for (const resource of resources) resource.id ||= uid();
       const before = combatSnapshot(character, [
@@ -2358,6 +2474,7 @@ function openRestModal(character, type) {
           ? character.usedSlots.map((_, index) => `usedSlots.${index}`)
           : []),
         ...resources.map((resource) => `resource:${resource.id}`),
+        ...attacks.map((attack) => `attack:${attack.id}`),
       ]);
       if (long) {
         character.hp = character.maxHp;
@@ -2386,6 +2503,7 @@ function openRestModal(character, type) {
         }
         character.lastShortRest = new Date().toISOString();
       }
+      for (const attack of attacks) attack.usesSpent = 0;
       for (const resource of resources)
         resource.remaining = Math.max(resource.remaining, resource.max);
       recordCombatEvent(character, long ? 'Long Rest' : 'Short Rest', before);
@@ -3110,6 +3228,7 @@ function validateBackup(input) {
     for (const [key, schema] of Object.entries(schemas)) {
       const noteIds = new Set();
       const resourceIds = new Set();
+      const attackIds = new Set();
       c[key] = c[key].map((item) => {
         if (!item || typeof item !== 'object')
           throw Error(`Invalid ${key} entry.`);
@@ -3136,6 +3255,40 @@ function validateBackup(input) {
             throw Error('Invalid resource ID.');
           resourceIds.add(item.id);
           clean.id = item.id;
+        }
+        if (key === 'attacks') {
+          if (item.id !== undefined) {
+            if (
+              typeof item.id !== 'string' ||
+              !/^[a-zA-Z0-9_-]{1,100}$/.test(item.id) ||
+              attackIds.has(item.id)
+            )
+              throw Error('Invalid attack ID.');
+            attackIds.add(item.id);
+            clean.id = item.id;
+          }
+          if (item.useLimit !== undefined) {
+            if (
+              item.useLimit !== '' &&
+              (!Number.isSafeInteger(item.useLimit) || item.useLimit < 1)
+            )
+              throw Error('Invalid attack use limit.');
+            clean.useLimit = item.useLimit;
+          }
+          if (item.usesSpent !== undefined) {
+            if (
+              !Number.isSafeInteger(item.usesSpent) ||
+              item.usesSpent < 0 ||
+              item.usesSpent > (attackHasUses(item) ? item.useLimit : 0)
+            )
+              throw Error('Invalid attack uses spent.');
+            clean.usesSpent = item.usesSpent;
+          }
+          if (item.recovery !== undefined) {
+            if (!['', 'short', 'long'].includes(item.recovery))
+              throw Error('Invalid attack recovery.');
+            clean.recovery = item.recovery;
+          }
         }
         if (key === 'attacks' || key === 'spells') {
           if (item.actionType !== undefined) {
@@ -3424,6 +3577,10 @@ document.addEventListener('click', async (e) => {
       );
       break;
 
+    case 'use-attack':
+      openUseAttackModal(c, Number(btn.dataset.index));
+      break;
+
     case 'add-attack':
       c.attacks.push({
         name: '',
@@ -3431,6 +3588,9 @@ document.addEventListener('click', async (e) => {
         damage: '',
         type: '',
         actionType: '',
+        useLimit: '',
+        usesSpent: 0,
+        recovery: '',
         notes: '',
       });
       editingAttack = c.attacks.at(-1);
@@ -3860,6 +4020,34 @@ document.addEventListener('input', (e) => {
     return;
   }
   if (!c) return;
+  if (el.dataset.attackUseLimit !== undefined) {
+    const attack = c.attacks[Number(el.dataset.attackUseLimit)];
+    const raw = el.value.trim();
+    const limit = raw === '' ? '' : Number(raw);
+    if (
+      raw !== '' &&
+      (!/^[0-9]+$/.test(raw) || !Number.isSafeInteger(limit) || limit < 1)
+    ) {
+      el.setCustomValidity(
+        'Enter a positive whole number, or leave blank for unlimited.',
+      );
+      return;
+    }
+    el.setCustomValidity('');
+    attack.useLimit = limit;
+    attack.usesSpent =
+      limit === '' ? 0 : Math.min(attack.usesSpent || 0, limit);
+    const spent = $(
+      `[data-field="attacks.${el.dataset.attackUseLimit}.usesSpent"]`,
+    );
+    if (spent) {
+      spent.max = limit || 0;
+      spent.value = attack.usesSpent;
+    }
+    pendingBackupEdits.add(el);
+    changed(false);
+    return;
+  }
   if (el.closest('.rest-popup')) {
     updateRestPreview(c);
     return;
@@ -3992,6 +4180,12 @@ document.addEventListener('change', (e) => {
   const el = e.target,
     c = current();
   if (!c) return;
+  if (el.dataset.attackUseLimit !== undefined && !el.validity.valid) {
+    el.value = c.attacks[Number(el.dataset.attackUseLimit)].useLimit ?? '';
+    el.setCustomValidity('');
+    toast('Enter a positive whole number, or leave blank for unlimited.');
+  }
+
   if (el.id === 'equipment-reference-category') {
     renderEquipmentReferenceResults();
     return;

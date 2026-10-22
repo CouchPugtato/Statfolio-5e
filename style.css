@@ -3496,3 +3496,7 @@ dialog:has(.rest-popup) #modal-form {
   font-size: 18px;
   overflow-wrap: anywhere;
 }
+/* An unavailable attack or spell is disabled, rather than loading. */
+dialog:has(.cast-popup) button[type='submit']:disabled {
+  cursor: default;
+}
