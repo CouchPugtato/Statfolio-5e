@@ -10,6 +10,192 @@ const html = fs.readFileSync('index.html', 'utf8');
 const image = 'data:image/png;base64,iVBORw0KGgo=';
 const settle = () => new Promise((resolve) => setTimeout(resolve, 25));
 
+test('Markdown emphasis escapes HTML, supports nesting, and leaves incomplete markers and bullets readable', async () => {
+  const a = await app();
+  try {
+    const format = a.w.StatfolioText;
+    assert.equal(
+      format.html('**Bold** and *italic*'),
+      '<strong>Bold</strong> and <em>italic</em>',
+    );
+    assert.equal(format.html('***Both***'), '<strong><em>Both</em></strong>');
+    assert.equal(
+      format.html('**Bold *inside* text**'),
+      '<strong>Bold </strong><strong><em>inside</em></strong><strong> text</strong>',
+    );
+    assert.equal(
+      format.html('**<img src=x onerror=alert(1)>**'),
+      '<strong>&lt;img src=x onerror=alert(1)&gt;</strong>',
+    );
+    assert.equal(
+      format.plain('**Bold** and *italic*\n● List\n            ○ Child'),
+      'Bold and italic\n● List\n            ○ Child',
+    );
+    assert.equal(format.html('Unfinished **bold'), 'Unfinished **bold');
+    assert.equal(format.html('2 * 3 * 4'), '2 * 3 * 4');
+    assert.equal(format.html('\\*literal\\*'), '*literal*');
+    assert.equal(format.html('**Long text**', 4), '<strong>Long</strong>');
+  } finally {
+    a.close();
+  }
+});
+
+test('multiline fields edit on focus, format on blur, retain keyboard shortcuts, and preserve Markdown across saves', async () => {
+  const a = await app();
+  try {
+    const c = a.api.blank('Formatted Notes');
+    a.api.use(c);
+    a.api.setPage('notes');
+    a.click('[data-action="new-note"]');
+    const textarea = a.$('[data-note="body"]');
+    assert.equal(textarea.hidden, true);
+    assert.equal(a.$('[data-text-format]'), null);
+    a.click('.note-editor .markdown-preview');
+    assert.equal(textarea.hidden, false);
+    assert.equal(a.w.document.activeElement, textarea);
+    for (const [key, markers, offset] of [
+      ['b', '****', 2],
+      ['i', '**', 1],
+    ]) {
+      for (const [text, cursor] of [
+        ['', 0],
+        ['Left right', 5],
+      ]) {
+        a.input('[data-note="body"]', text);
+        textarea.setSelectionRange(cursor, cursor);
+        textarea.dispatchEvent(
+          new a.w.KeyboardEvent('keydown', {
+            key,
+            ctrlKey: true,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+        assert.equal(
+          textarea.value,
+          text.slice(0, cursor) + markers + text.slice(cursor),
+        );
+        assert.equal(textarea.selectionStart, cursor + offset);
+        assert.equal(textarea.selectionEnd, cursor + offset);
+      }
+    }
+    a.input('[data-note="body"]', 'Silver sword');
+    textarea.focus();
+    textarea.setSelectionRange(0, 6);
+    textarea.dispatchEvent(
+      new a.w.KeyboardEvent('keydown', {
+        key: 'b',
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    assert.equal(textarea.value, '**Silver** sword');
+    textarea.dispatchEvent(
+      new a.w.KeyboardEvent('keydown', {
+        key: 'i',
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    assert.equal(textarea.value, '***Silver*** sword');
+    textarea.dispatchEvent(
+      new a.w.KeyboardEvent('keydown', {
+        key: 'i',
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    assert.equal(textarea.value, '**Silver** sword');
+    assert.equal(c.notes[0].body, '**Silver** sword');
+    const revision = a.api.revision;
+    a.api.renderCharacter();
+    assert.equal(a.$('[data-note="body"]').hidden, false);
+    a.$('[data-note="title"]').focus();
+    assert.equal(textarea.hidden, true);
+    assert.equal(
+      a.$('.note-editor .markdown-preview strong').textContent,
+      'Silver',
+    );
+    assert.equal(a.api.revision, revision);
+    a.api.renderCharacter();
+    assert.equal(a.$('[data-note="body"]').hidden, true);
+    assert.equal(a.$('.markdown-toolbar'), null);
+    assert.equal(a.$('.note-preview-excerpt strong').textContent, 'Silver');
+    a.$('.note-editor .markdown-preview').focus();
+    assert.equal(a.$('[data-note="body"]').hidden, false);
+    await a.api.persist();
+    const b = await app(a.storage);
+    try {
+      assert.equal(b.api.current.notes[0].body, '**Silver** sword');
+    } finally {
+      b.close();
+    }
+  } finally {
+    a.close();
+  }
+});
+
+test('all multiline sheet fields show formatted text and compact cards and popups render emphasis', async () => {
+  const a = await app();
+  try {
+    const c = a.api.blank('Formatted Sheet');
+    c.attacks.push({
+      name: 'Blade',
+      bonus: '',
+      damage: '',
+      type: '',
+      notes: '**Silver** edge',
+    });
+    c.spells.push({
+      name: 'Light',
+      level: 0,
+      school: '',
+      time: '',
+      range: '',
+      components: '',
+      duration: '',
+      prepared: false,
+      description: '*Bright* light <script>literal</script>',
+    });
+    c.equipment.push({
+      name: 'Relic',
+      notes: '**Ancient** relic',
+      quantity: 1,
+      weight: 1,
+      equipped: false,
+    });
+    a.api.use(c);
+    for (const page of [
+      'overview',
+      'background',
+      'combat',
+      'spells',
+      'equipment',
+    ]) {
+      a.api.setPage(page);
+      for (const textarea of a.w.document.querySelectorAll('#main textarea'))
+        assert.ok(textarea.closest('.markdown-editor'));
+    }
+    assert.equal(a.$('.inventory-notes-preview strong').textContent, 'Ancient');
+    a.input('#inventory-search', 'ancient relic');
+    assert.equal(a.$('[data-inventory-index="0"]').hidden, false);
+    a.api.setPage('combat');
+    assert.equal(a.$('.attack-summary-notes strong').textContent, 'Silver');
+    a.api.setPage('spells');
+    assert.equal(a.$('.spell-description em').textContent, 'Bright');
+    a.$('.spell-record-summary').dispatchEvent(
+      new a.w.Event('pointerover', { bubbles: true }),
+    );
+    assert.equal(a.$('.spell-popup-description em').textContent, 'Bright');
+    assert.equal(a.$('.spell-popup-description script'), null);
+  } finally {
+    a.close();
+  }
+});
+
 test('level-up drafts can navigate, import and remove spells, and cancel without saving', async () => {
   const a = await app();
   try {
@@ -175,11 +361,12 @@ async function app(storage = new IDBFactory()) {
     return 'blob:test';
   };
   w.URL.revokeObjectURL = () => {};
+  w.eval(fs.readFileSync('text-format.js', 'utf8'));
   w.eval(pdfSource);
   w.eval(
     source.replace(/init\(\);\s*$/, '') +
       `
-    globalThis.api = { blank, prof, mod, views, validateBackup, persist, shell, changed, exportBackup, backupRecommended, renderBackupStatus,
+    globalThis.api = { blank, prof, mod, views, validateBackup, persist, shell, renderCharacter, changed, exportBackup, backupRecommended, renderBackupStatus,
       get state(){return state;},get revision(){return revision;},get savedRevision(){return savedRevision;},
       get failed(){return saveFailed;},get db(){return db;},setPage(p){page=p;shell();},
       use(c){state.characters.push(c);state.selected=c.id;shell();},get current(){return current();} };
@@ -1056,6 +1243,73 @@ test('currency accepts comma-separated denominations and Enter gains once', asyn
       assert.equal(JSON.stringify(c.coins), before);
       assert.equal(a.$('#currency-amount').value, amount);
     }
+  } finally {
+    a.close();
+  }
+});
+
+test('bullet shortcuts work in every multiline sheet field and level-up drafts without affecting single-line inputs', async () => {
+  const a = await app();
+  try {
+    const c = a.api.blank('Lists Everywhere');
+    c.equipment.push({
+      name: 'Relic',
+      notes: '',
+      quantity: 1,
+      weight: 0,
+      equipped: false,
+    });
+    a.api.use(c);
+    const cases = [
+      ['background', 'story'],
+      ['combat', 'features'],
+      ['combat', 'attacks.0.notes', 'add-attack'],
+      ['spells', 'spellNotes'],
+      ['spells', 'spells.0.description', 'add-spell'],
+      ['equipment', 'equipment.0.notes'],
+    ];
+    const key = (el, name, options = {}) =>
+      el.dispatchEvent(
+        new a.w.KeyboardEvent('keydown', {
+          key: name,
+          bubbles: true,
+          cancelable: true,
+          ...options,
+        }),
+      );
+    for (const [page, path, add] of cases) {
+      a.api.setPage(page);
+      if (add) a.click(`[data-action="${add}"]`);
+      const selector = `[data-field="${path}"]`;
+      const el = a.$(selector);
+      assert.equal(el.tagName, 'TEXTAREA');
+      a.input(selector, '* ');
+      assert.equal(el.value, '● ');
+      a.input(selector, el.value + '**Parent**');
+      key(el, 'Enter');
+      key(el, 'Tab');
+      assert.equal(el.value, '● **Parent**\n            ○ ');
+      key(el, 'Backspace');
+      assert.equal(el.value, '● **Parent**\n');
+      a.input(selector, el.value + '            - ');
+      assert.equal(el.value, '● **Parent**\n            ○ ');
+      key(el, 'Tab', { shiftKey: true });
+      assert.equal(el.value, '● **Parent**\n● ');
+      assert.equal(
+        path.split('.').reduce((value, part) => value[part], c),
+        el.value,
+      );
+    }
+    a.input('[data-field="equipment.0.name"]', '- ');
+    assert.equal(c.equipment[0].name, '- ');
+    a.api.setPage('overview');
+    a.click('[data-action="level-up"]');
+    await a.submit();
+    await a.submit();
+    a.input('[data-level-up="features"]', '- ');
+    assert.equal(a.$('[data-level-up="features"]').value, '● ');
+    assert.equal(c.features, '● **Parent**\n● ');
+    a.click('#modal [data-action="close-modal"]');
   } finally {
     a.close();
   }

@@ -586,6 +586,33 @@
   }
 
   async function create(character, rules, suppliedAssets) {
+    // Editable PDF fields use plain text; formatting markers must not print.
+    // Work on a copy so export never changes the browser's Markdown source.
+    character = JSON.parse(JSON.stringify(character));
+    const plain = window.StatfolioText?.plain || ((value) => value);
+    for (const key of [
+      'features',
+      'spellNotes',
+      'appearance',
+      'personality',
+      'ideals',
+      'bonds',
+      'flaws',
+      'story',
+      'allies',
+      'proficiencies',
+    ]) {
+      if (typeof character[key] === 'string')
+        character[key] = plain(character[key]);
+    }
+    for (const [list, key] of [
+      ['attacks', 'notes'],
+      ['equipment', 'notes'],
+      ['spells', 'description'],
+      ['notes', 'body'],
+    ]) {
+      for (const entry of character[list] || []) entry[key] = plain(entry[key]);
+    }
     const assets = suppliedAssets || (await loadAssets());
     const { PDFLib } = assets;
     const pdf = await PDFLib.PDFDocument.load(assets.template);

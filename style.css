@@ -614,6 +614,36 @@ textarea {
   line-height: 1.7;
 }
 
+.markdown-editor {
+  min-width: 0;
+  width: 100%;
+}
+
+.markdown-preview {
+  cursor: text;
+  padding: 10px 11px;
+  min-height: 56px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #1b2533;
+  font-size: 14px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.markdown-editor > [hidden] {
+  display: none;
+}
+
+.inventory-notes > .markdown-editor {
+  margin-top: 8px;
+}
+
+.inventory-notes .markdown-editor textarea {
+  margin-top: 0;
+}
+
 input[type='number'],
 .card-stats strong,
 .ability-tile > strong,
@@ -3140,14 +3170,16 @@ dialog .form-grid {
 
 .concentration-tracker {
   display: grid;
-  gap: var(--field-gap);
-  padding-block: var(--field-gap);
-  border-block: 1px solid var(--line);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  align-items: center;
+  gap: 8px 12px;
+  padding-block: 8px;
 }
 
 /* Separate controls from the spell cards, with more room for filtering. */
 .spellbook-controls {
   display: grid;
+  align-items: start;
   grid-template-columns: minmax(260px, 1fr) minmax(0, 2fr);
   gap: var(--section-gap);
   margin-bottom: var(--section-gap);
@@ -3161,6 +3193,19 @@ dialog .form-grid {
 .spellbook-controls .concentration-tracker {
   padding-block: 0;
   border: 0;
+}
+
+.spellbook-controls > .panel:has(.concentration-tracker) {
+  padding: 12px 16px;
+}
+
+.spellbook-controls > .panel:has(.concentration-tracker) > .panel-heading {
+  margin-bottom: 8px;
+}
+
+.concentration-tracker > select {
+  padding: 6px 9px;
+  font-size: 13px;
 }
 
 .spellbook-controls .spell-filters {
@@ -3191,11 +3236,12 @@ dialog .form-grid {
 }
 
 .concentration-reminder {
+  grid-column: 1 / -1;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
-  padding: 12px;
+  gap: 8px;
+  padding: 8px;
   border: 1px solid #6284ad;
   border-radius: 4px;
   background: #26374c;
@@ -3207,13 +3253,24 @@ dialog .form-grid {
 
 .concentration-reminder small {
   display: block;
-  margin-top: 6px;
+  margin-top: 4px;
   color: var(--muted);
 }
 
 .concentration-actions {
   display: flex;
   gap: 8px;
+}
+
+.concentration-actions button {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+@media (max-width: 480px) {
+  .concentration-tracker {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 .spellbook-actions,
 .inventory-actions {

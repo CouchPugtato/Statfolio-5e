@@ -25,6 +25,7 @@ function setup() {
   dom.window.ArrayBuffer = ArrayBuffer;
   dom.window.eval(fs.readFileSync('assets/vendor/pdf-lib.min.js', 'utf8'));
   dom.window.eval(fs.readFileSync('assets/vendor/fontkit.min.js', 'utf8'));
+  dom.window.eval(fs.readFileSync('text-format.js', 'utf8'));
   dom.window.eval(fs.readFileSync('pdf-sheet.js', 'utf8'));
   dom.window.eval(
     fs.readFileSync('app.js', 'utf8').replace(/init\(\);\s*$/, '') +
@@ -160,6 +161,7 @@ test('fills the original editable template with correct stats, spell rows, prepa
 
   try {
     const character = sample(rules);
+    character.features = '**Extra Attack**\n*Archery* fighting style';
     const before = JSON.stringify(character);
     const bytes = await api.create(character, rules, assets);
     const pdf = await PDFLib.PDFDocument.load(bytes);
@@ -193,6 +195,14 @@ test('fills the original editable template with correct stats, spell rows, prepa
       /● Watchful/,
     );
     assert.match(form.getTextField('Feat+Traits').getText(), /Exhaustion 2/);
+    assert.match(
+      form.getTextField('Features and Traits').getText(),
+      /Extra Attack/,
+    );
+    assert.equal(
+      form.getTextField('Features and Traits').getText().includes('*'),
+      false,
+    );
     assert.equal(form.getTextField('SpellSaveDC  2').getText(), '14');
     assert.equal(form.getTextField('SpellAtkBonus 2').getText(), '+6');
     const group = assets.fieldMap.spellLevels[1];

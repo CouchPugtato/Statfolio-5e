@@ -12,6 +12,7 @@ const esc = (value) =>
   );
 
 const uid = () => crypto.randomUUID();
+const formatText = (value, limit) => window.StatfolioText.html(value, limit);
 
 const abilities = [
   'Strength',
@@ -234,7 +235,9 @@ function itemNotes(item, index) {
   >
     <summary
       ><span>Notes</span
-      ><span class="inventory-notes-preview">${esc(preview)}</span></summary
+      ><span class="inventory-notes-preview"
+        >${formatText(preview)}</span
+      ></summary
     >
     <textarea
       rows="2"
@@ -248,7 +251,9 @@ ${esc(item.notes)}</textarea>
 
 function inventoryMatches(item) {
   const query = inventorySearch.trim().toLocaleLowerCase();
-  return `${item.name} ${item.notes}`.toLocaleLowerCase().includes(query);
+  return `${item.name} ${window.StatfolioText.plain(item.notes)}`
+    .toLocaleLowerCase()
+    .includes(query);
 }
 
 // Keep item objects intact so expanded notes and other item data follow the move.
@@ -792,29 +797,165 @@ function growTextArea(el) {
 }
 
 function growTextAreas(root = document) {
+  prepareTextEditors(root);
   root.querySelectorAll('textarea').forEach(growTextArea);
 }
 
-const noteIndent = ' '.repeat(12);
+// Unfocused fields show formatted text; focusing reveals the Markdown source.
+function prepareTextEditors(root) {
+  for (const textarea of root.querySelectorAll('textarea')) {
+    if (textarea.parentElement?.classList.contains('markdown-editor')) continue;
+    const editor = document.createElement('div');
+    editor.className = 'markdown-editor';
+    const preview = document.createElement('div');
+    preview.className = 'markdown-preview';
+    preview.tabIndex = 0;
+    preview.setAttribute('role', 'textbox');
+    preview.setAttribute('aria-multiline', 'true');
+    preview.setAttribute(
+      'aria-label',
+      textarea.getAttribute('aria-label') ||
+        textarea.closest('label')?.querySelector('span')?.textContent ||
+        'Text',
+    );
+    preview.title = 'Click to edit';
+    textarea.before(editor);
+    editor.append(textarea, preview);
+    showTextPreview(editor, document.activeElement !== textarea);
+  }
+}
 
-const noteBullet = (indent) =>
-  ['●', '○', '■'][Math.min(2, Math.ceil(indent.length / noteIndent.length))];
+function showTextPreview(editor, visible) {
+  const textarea = $('textarea', editor);
+  const preview = $('.markdown-preview', editor);
+  textarea.hidden = visible;
+  preview.hidden = !visible;
+  preview.innerHTML = formatText(textarea.value);
+  if (!textarea.value) {
+    const placeholder = document.createElement('span');
+    placeholder.className = 'muted';
+    placeholder.textContent = textarea.placeholder || 'Click to add text…';
+    preview.append(placeholder);
+  }
+}
 
-// Journal list editing uses plain text so bullets survive backups and exports.
-function formatNoteBullet(el) {
+function applyTextFormat(textarea, kind) {
+  const marker = kind === 'bold' ? '**' : '*';
+  const start = textarea.selectionStart;
+  const end = textarea.selectionEnd;
+  const selected = textarea.value.slice(start, end);
+  const hasFormat = (left, right) =>
+    kind === 'bold'
+      ? left >= 2 && right >= 2
+      : left % 2 === 1 && right % 2 === 1;
+  const surrounding = hasFormat(
+    textarea.value.slice(0, start).match(/\*+$/)?.[0].length || 0,
+    textarea.value.slice(end).match(/^\*+/)?.[0].length || 0,
+  );
+  let replacement;
+  let from = start;
+  let to = end;
+  let selectionStart;
+  let selectionEnd;
+  if (surrounding) {
+    from -= marker.length;
+    to += marker.length;
+    replacement = selected;
+    selectionStart = from;
+    selectionEnd = from + selected.length;
+  } else if (
+    selected.length > marker.length * 2 &&
+    hasFormat(
+      selected.match(/^\*+/)?.[0].length || 0,
+      selected.match(/\*+$/)?.[0].length || 0,
+    )
+  ) {
+    replacement = selected.slice(marker.length, -marker.length);
+    selectionStart = start;
+    selectionEnd = start + replacement.length;
+  } else {
+    replacement = marker + selected + marker;
+    selectionStart = start + marker.length;
+    selectionEnd = selectionStart + selected.length;
+  }
+  textarea.focus();
+  textarea.setSelectionRange(from, to);
+  // Native insertion preserves the browser's undo history where supported.
+  const nativeInsert =
+    typeof document.execCommand === 'function' &&
+    document.execCommand('insertText', false, replacement);
+  if (!nativeInsert) textarea.setRangeText(replacement, from, to, 'preserve');
+  textarea.setSelectionRange(selectionStart, selectionEnd);
+  if (!nativeInsert)
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+  textarea.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+function editFormattedText(preview) {
+  const editor = preview.closest('.markdown-editor');
+  const textarea = $('textarea', editor);
+  showTextPreview(editor, false);
+  textarea.focus();
+  growTextArea(textarea);
+}
+
+document.addEventListener('click', (event) => {
+  const preview = event.target.closest('.markdown-preview');
+  if (!preview) return;
+  event.preventDefault();
+  editFormattedText(preview);
+});
+
+document.addEventListener('focusin', (event) => {
+  const target = event.target;
+  if (target.classList.contains('markdown-preview')) editFormattedText(target);
+  else if (target.tagName === 'TEXTAREA' && target.closest('.markdown-editor'))
+    showTextPreview(target.closest('.markdown-editor'), false);
+});
+
+document.addEventListener('focusout', (event) => {
+  const textarea = event.target;
+  if (textarea.tagName === 'TEXTAREA' && textarea.closest('.markdown-editor'))
+    showTextPreview(textarea.closest('.markdown-editor'), true);
+});
+
+document.addEventListener('keydown', (event) => {
+  const textarea = event.target;
+  if (
+    textarea.tagName !== 'TEXTAREA' ||
+    event.isComposing ||
+    event.altKey ||
+    !(event.ctrlKey || event.metaKey) ||
+    !['b', 'i'].includes(event.key.toLowerCase())
+  )
+    return;
+  event.preventDefault();
+  applyTextFormat(
+    textarea,
+    event.key.toLowerCase() === 'b' ? 'bold' : 'italic',
+  );
+});
+
+const bulletIndent = ' '.repeat(12);
+
+const bulletForIndent = (indent) =>
+  ['●', '○', '■'][Math.min(2, Math.ceil(indent.length / bulletIndent.length))];
+
+// Multiline lists use plain text so bullets survive backups and exports.
+function formatTextBullet(el) {
   if (el.selectionStart !== el.selectionEnd) return;
   const end = el.selectionStart;
   const start = el.value.lastIndexOf('\n', end - 1) + 1;
   const match = el.value.slice(start, end).match(/^([ \t]*)[-*] $/);
   if (!match) return;
-  const indent = match[1].replace(/\t/g, noteIndent);
-  el.setRangeText(`${indent}${noteBullet(indent)} `, start, end, 'end');
+  const indent = match[1].replace(/\t/g, bulletIndent);
+  el.setRangeText(`${indent}${bulletForIndent(indent)} `, start, end, 'end');
 }
 
-function handleNoteListKey(event) {
+function handleTextListKey(event) {
   const el = event.target;
   if (
-    el.dataset.note !== 'body' ||
+    el.tagName !== 'TEXTAREA' ||
     event.isComposing ||
     event.ctrlKey ||
     event.metaKey ||
@@ -845,9 +986,9 @@ function handleNoteListKey(event) {
   ) {
     event.preventDefault();
     const indent = event.shiftKey
-      ? match[1].slice(noteIndent.length)
-      : match[1] + noteIndent;
-    const prefix = `${indent}${noteBullet(indent)} `;
+      ? match[1].slice(bulletIndent.length)
+      : match[1] + bulletIndent;
+    const prefix = `${indent}${bulletForIndent(indent)} `;
     const oldLength = match[1].length + 2;
     const selectionEnd = el.selectionEnd;
     el.setRangeText(prefix, start, start + oldLength, 'preserve');
@@ -858,16 +999,16 @@ function handleNoteListKey(event) {
   } else if (event.key === 'Enter' && !event.shiftKey && match) {
     event.preventDefault();
     if (!match[3].trim()) {
-      const indent = match[1].slice(noteIndent.length);
+      const indent = match[1].slice(bulletIndent.length);
       el.setRangeText(
-        match[1] ? `${indent}${noteBullet(indent)} ` : '',
+        match[1] ? `${indent}${bulletForIndent(indent)} ` : '',
         start,
         end,
         'end',
       );
     } else {
       el.setRangeText(
-        `\n${match[1]}${noteBullet(match[1])} `,
+        `\n${match[1]}${bulletForIndent(match[1])} `,
         cursor,
         el.selectionEnd,
         'end',
@@ -904,6 +1045,13 @@ function patchContent(target, html) {
       return;
     }
     if (oldNode.nodeType !== 1) return;
+    if (
+      oldNode.classList.contains('markdown-editor') &&
+      newNode.classList.contains('markdown-editor') &&
+      $('textarea', oldNode) === document.activeElement &&
+      !$('textarea', oldNode).hidden
+    )
+      showTextPreview(newNode, false);
     for (const attr of [...oldNode.attributes])
       if (!newNode.hasAttribute(attr.name)) oldNode.removeAttribute(attr.name);
     for (const attr of newNode.attributes)
@@ -934,6 +1082,7 @@ function patchContent(target, html) {
   for (const attr of target.attributes)
     wrapper.setAttribute(attr.name, attr.value);
   wrapper.append(template.content);
+  prepareTextEditors(wrapper);
   sync(target, wrapper);
 }
 
@@ -1116,7 +1265,7 @@ function concentrationTracker(character, showLabel = true) {
       : '';
 
   return `<div class="concentration-tracker"><div class="concentration-heading">${showLabel ? '<span>Concentration</span>' : ''}<strong>${esc(active || 'None')}</strong>${active ? button('end-concentration', 'End', 'text-button') : ''}</div>
-    ${candidates.length ? `<select id="concentration-spell" aria-label="Start or switch concentration spell"><option value="">${active ? 'Switch spell…' : 'Start concentrating…'}</option>${candidates.map(({ spell, index }) => `<option value="${index}">${esc(spell.name)}${spell.level ? ` · Level ${spell.level}` : ' · Cantrip'}</option>`).join('')}</select>` : '<p class="help">Mark a spell as concentration in its editor to track it here.</p>'}
+    ${candidates.length ? `<select id="concentration-spell" aria-label="Start or switch concentration spell"><option value="">${active ? 'Switch spell…' : 'Start concentrating…'}</option>${candidates.map(({ spell, index }) => `<option value="${index}">${esc(spell.name)}${spell.level ? ` · Level ${spell.level}` : ' · Cantrip'}</option>`).join('')}</select>` : ''}
     ${reminder}</div>`;
 }
 
@@ -1838,7 +1987,7 @@ function attackRecords(c) {
               ><span class="attack-edit-label">Edit</span></span
             >
             ${details ? /* HTML */ `<span class="attack-summary-stats">${details}</span>` : '<span class="muted">Click to add attack details.</span>'}
-            ${attack.notes.trim() ? /* HTML */ `<span class="attack-summary-notes">${esc(attack.notes)}</span>` : ''} </button
+            ${attack.notes.trim() ? /* HTML */ `<span class="attack-summary-notes">${formatText(attack.notes)}</span>` : ''} </button
           >${attackUseShortcuts(attack, index)}<div class="spell-card-actions"
             >${button('use-attack', 'Use', 'secondary cast-button', `data-index="${index}" aria-label="Use ${esc(attack.name || 'attack / action')}"`)}</div
           ></div
@@ -1896,7 +2045,7 @@ function combatSpells(character) {
             ><span class="attack-edit-label">Edit</span></span
           >
           ${details ? `<span class="attack-summary-stats">${details}</span>` : ''}
-          ${spell.description.trim() ? `<span class="attack-summary-notes spell-description">${esc(spell.description)}</span>` : ''} </button
+          ${spell.description.trim() ? `<span class="attack-summary-notes spell-description">${formatText(spell.description)}</span>` : ''} </button
         >${spellCardActions(character, spell, index)}</div
       >`;
     })
@@ -1956,7 +2105,8 @@ function showReferencePopup(card, title, descriptionText) {
     document.body.append(spellPopup);
   }
   $('.spell-popup-title', spellPopup).textContent = title;
-  $('.spell-popup-description', spellPopup).textContent = descriptionText;
+  $('.spell-popup-description', spellPopup).innerHTML =
+    formatText(descriptionText);
   spellPopup.hidden = false;
   spellPopupCard = card;
   card.setAttribute('aria-describedby', spellPopup.id);
@@ -2068,7 +2218,7 @@ document.addEventListener('keydown', (event) => {
   }
 
   if (undoDeletedEntry(event)) return;
-  handleNoteListKey(event);
+  handleTextListKey(event);
   if (event.key === 'Escape') {
     hideSpellPopup();
     if ($('#condition-picker')?.hidden === false) {
@@ -2168,7 +2318,7 @@ function previewReferenceSpell(id) {
         )
         .join('')}</dl
     ><div class="spell-reference-description reference-description"
-      >${esc(spell.description)}</div
+      >${formatText(spell.description)}</div
     >`;
   $('#modal button[type="submit"]').disabled = false;
   for (const choice of document.querySelectorAll('.spell-reference-choice')) {
@@ -2325,7 +2475,7 @@ function previewReferenceEquipment(id) {
           >${item.weight === null ? 'Not listed — set manually after import' : `${item.weight} lb`}</dd
         ></div
       ><div><dt>Listed Cost</dt><dd>${esc(item.cost)}</dd></div></dl
-    ><div class="reference-description">${esc(item.notes)}</div>`;
+    ><div class="reference-description">${formatText(item.notes)}</div>`;
   $('#modal button[type="submit"]').disabled = false;
   for (const choice of document.querySelectorAll('.equipment-reference-choice'))
     choice.setAttribute(
@@ -2515,7 +2665,7 @@ function spellRecords(c) {
             >
             <span class="spell-record-meta">${esc(metadata)}</span>
             ${details ? /* HTML */ `<span class="attack-summary-stats">${details}</span>` : ''}
-            ${spell.description.trim() ? /* HTML */ `<span class="attack-summary-notes spell-description">${esc(spell.description)}</span>` : ''} </button
+            ${spell.description.trim() ? /* HTML */ `<span class="attack-summary-notes spell-description">${formatText(spell.description)}</span>` : ''} </button
           >${spellCardActions(c, spell, index)}</div
         >`;
       })
@@ -3024,8 +3174,8 @@ function levelUpReview(session) {
       ><p class="help"
         >Before:
         ${esc(base.spells.map((spell) => spell.name || 'Unnamed Spell').join(', ') || 'None')}</p
-      >${draft.spells.map((spell) => /* HTML */ `<div><strong>${esc(spell.name || 'Unnamed Spell')} · ${spell.level === 0 ? 'Cantrip' : `Level ${spell.level}`}${spell.prepared ? ' · Prepared' : ''}</strong><p>${esc(spell.description)}</p></div>`).join('')}</details
-    >${base.features !== draft.features ? /* HTML */ `<section class="level-up-review-details"><h3>Features After Level Up</h3><p>${esc(draft.features || 'None')}</p></section>` : '<p class="help">Features unchanged.</p>'}${base.spellNotes !== draft.spellNotes ? /* HTML */ `<section class="level-up-review-details"><h3>Spellcasting Notes After Level Up</h3><p>${esc(draft.spellNotes || 'None')}</p></section>` : ''}`;
+      >${draft.spells.map((spell) => /* HTML */ `<div><strong>${esc(spell.name || 'Unnamed Spell')} · ${spell.level === 0 ? 'Cantrip' : `Level ${spell.level}`}${spell.prepared ? ' · Prepared' : ''}</strong><p>${formatText(spell.description)}</p></div>`).join('')}</details
+    >${base.features !== draft.features ? /* HTML */ `<section class="level-up-review-details"><h3>Features After Level Up</h3><p>${formatText(draft.features || 'None')}</p></section>` : '<p class="help">Features unchanged.</p>'}${base.spellNotes !== draft.spellNotes ? /* HTML */ `<section class="level-up-review-details"><h3>Spellcasting Notes After Level Up</h3><p>${formatText(draft.spellNotes || 'None')}</p></section>` : ''}`;
 }
 
 function renderLevelUpStep() {
@@ -3324,7 +3474,7 @@ const views = {
       ><div class="spellbook-controls"
         >${panel('Concentration', concentrationTracker(c, false))}${panel('Search & Filters', spellFilterControls(c))}</div
       >${panel(
-        'Your Spells',
+        'Known Spells',
         `<div id="spell-results">${spellRecords(c)}</div>`,
         `<div class="spellbook-actions">${button('combat-log', 'Combat log', 'secondary')}${button('import-spell', 'Import spell', 'secondary')}${button('add-spell', '＋ Add spell', 'secondary')}</div>`,
       )}${panel('Spellcasting Notes', area('Rituals, Pact Magic & Other Details', 'spellNotes'))}`,
@@ -3462,7 +3612,7 @@ function journalList(c) {
           (noteFilter.startsWith('tag:')
             ? n.tags?.includes(noteFilter.slice(4))
             : n.tag === noteFilter)) &&
-        `${n.title} ${n.body} ${n.tag} ${(n.tags || []).join(' ')}`
+        `${n.title} ${window.StatfolioText.plain(n.body)} ${n.tag} ${(n.tags || []).join(' ')}`
           .toLocaleLowerCase()
           .includes(query),
     )
@@ -3514,7 +3664,7 @@ function journalList(c) {
                     ><span class="note-category"
                       >${esc([item.tag || 'General', ...(item.tags || [])].join(' · '))}</span
                     ><span
-                      >${esc(item.body.replace(/\s+/g, ' ').slice(0, 160) || 'No text yet.')}</span
+                      >${formatText(item.body.replace(/\s+/g, ' ') || 'No text yet.', 160)}</span
                     ></span
                   ></button
                 >`,
@@ -3681,6 +3831,7 @@ function modal(title, body, submit, label = 'Save') {
     }
   };
   dialog.showModal();
+  growTextAreas(dialog);
 }
 
 function confirmAction(title, description, action, label = 'Confirm') {
@@ -4862,7 +5013,7 @@ document.addEventListener(
 document.addEventListener('input', (e) => {
   const el = e.target,
     c = current();
-  if (el.dataset.note === 'body' && !e.isComposing) formatNoteBullet(el);
+  if (el.tagName === 'TEXTAREA' && !e.isComposing) formatTextBullet(el);
   if (el.tagName === 'TEXTAREA') growTextArea(el);
   if (el.id === 'library-search') {
     const pos = el.selectionStart;
@@ -4984,8 +5135,9 @@ document.addEventListener('input', (e) => {
     if (el.closest('.inventory-notes')) {
       el
         .closest('.inventory-notes')
-        .querySelector('.inventory-notes-preview').textContent =
-        String(value).trim().replace(/\s+/g, ' ') || 'Add notes…';
+        .querySelector('.inventory-notes-preview').innerHTML = formatText(
+        String(value).trim().replace(/\s+/g, ' ') || 'Add notes…',
+      );
     }
     const timingField = el.dataset.field.match(/^spells\.(\d+)\.time$/);
     if (timingField) {
