@@ -4380,6 +4380,7 @@ document.addEventListener('click', async (e) => {
       changed();
       renderCharacter();
       $('#currency-unit').value = unit;
+      $('#currency-amount').value = '';
       $('#currency-amount').focus();
       break;
     }

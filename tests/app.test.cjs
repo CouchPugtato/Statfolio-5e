@@ -799,8 +799,10 @@ test('currency spending breaks larger coins, combines smaller coins, and saves g
     assert.deepEqual({ ...c.coins }, { cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 });
     a.input('#currency-unit', 'ep');
     a.input('#currency-amount', '3');
+    a.$('#currency-amount').focus();
     a.click('[data-action="gain"]');
     assert.equal(c.coins.ep, 3);
+    assert.equal(a.$('#currency-amount').value, '');
     await a.api.persist();
     const b = await app(a.storage);
     try {
@@ -820,6 +822,7 @@ test('currency accepts comma-separated denominations and Enter gains once', asyn
     a.api.use(c);
     a.api.setPage('equipment');
     a.input('#currency-amount', '10gp, 2 sp, 3CP, 1pp, 2ep, 5 gp');
+    a.$('#currency-amount').focus();
     a.$('#currency-amount').dispatchEvent(
       new a.w.KeyboardEvent('keydown', {
         key: 'Enter',
@@ -854,6 +857,7 @@ test('currency accepts comma-separated denominations and Enter gains once', asyn
       a.input('#currency-amount', amount);
       a.click('[data-action="gain"]');
       assert.equal(JSON.stringify(c.coins), before);
+      assert.equal(a.$('#currency-amount').value, amount);
     }
   } finally {
     a.close();
