@@ -773,6 +773,67 @@ test('expertise implies proficiency, bonuses update, and removing proficiency cl
   }
 });
 
+test('inventory search matches names and notes while preserving item indices, weight totals, and search state', async () => {
+  const a = await app();
+  try {
+    const c = a.api.blank('Search Gear');
+    c.equipment = [
+      { name: 'Rope', notes: 'Hemp', quantity: 1, weight: 10, equipped: false },
+      {
+        name: 'Sword',
+        notes: 'Silver blade',
+        quantity: 1,
+        weight: 3,
+        equipped: false,
+      },
+      {
+        name: 'Potion',
+        notes: 'Healing',
+        quantity: 2,
+        weight: 1,
+        equipped: false,
+      },
+    ];
+    a.api.use(c);
+    a.api.setPage('equipment');
+    const revision = a.api.revision;
+    a.$('#inventory-search').focus();
+    a.input('#inventory-search', '  SILVER ');
+    assert.equal(a.$('[data-inventory-index="0"]').hidden, true);
+    assert.equal(a.$('[data-inventory-index="1"]').hidden, false);
+    assert.equal(a.$('[data-inventory-index="2"]').hidden, true);
+    assert.match(a.$('.inventory-list + .help').textContent, /15.0 lb/);
+    assert.equal(a.w.document.activeElement, a.$('#inventory-search'));
+    assert.equal(a.api.revision, revision);
+    a.input('[data-field="equipment.1.equipped"]', true);
+    assert.equal(c.equipment[1].equipped, true);
+    assert.equal(c.equipment[0].equipped, false);
+    a.api.setPage('combat');
+    a.api.setPage('equipment');
+    assert.equal(a.$('#inventory-search').value, '  SILVER ');
+    assert.equal(a.$('[data-inventory-index="0"]').hidden, true);
+    a.click('[data-inventory-index="1"] [data-action="remove"]');
+    await a.submit();
+    assert.deepEqual(
+      Array.from(c.equipment, (item) => item.name),
+      ['Rope', 'Potion'],
+    );
+    assert.equal(a.$('#inventory-search-empty').hidden, false);
+    a.input('#inventory-search', 'potion');
+    assert.equal(a.$('[data-inventory-index="1"]').hidden, false);
+    assert.equal(a.$('#inventory-search-empty').hidden, true);
+    a.click('[data-action="add-item"]');
+    assert.equal(a.$('#inventory-search').value, '');
+    assert.equal(a.$('[data-inventory-index="2"]').hidden, false);
+    a.input('#inventory-search', 'missing');
+    a.api.use(a.api.blank('Other Gear'));
+    a.api.setPage('equipment');
+    assert.equal(a.$('#inventory-search').value, '');
+  } finally {
+    a.close();
+  }
+});
+
 test('currency spending breaks larger coins, combines smaller coins, and saves gains', async () => {
   const a = await app();
   try {

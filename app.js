@@ -221,7 +221,23 @@ const deletedEntries = [];
 let spellPopup = null;
 let spellPopupCard = null;
 let skillSearch = '';
+let inventorySearch = '';
 let skillCharacterId = null;
+
+function inventoryMatches(item) {
+  const query = inventorySearch.trim().toLocaleLowerCase();
+  return `${item.name} ${item.notes}`.toLocaleLowerCase().includes(query);
+}
+
+function filterInventory(character) {
+  for (const row of document.querySelectorAll('[data-inventory-index]')) {
+    row.hidden = !inventoryMatches(
+      character.equipment[Number(row.dataset.inventoryIndex)],
+    );
+  }
+  $('#inventory-search-empty').hidden =
+    !character.equipment.length || character.equipment.some(inventoryMatches);
+}
 
 const filteredSkills = () =>
   Object.entries(skills).filter(([name]) =>
@@ -588,6 +604,7 @@ function renderCharacter() {
   if (skillCharacterId !== c.id) {
     skillCharacterId = c.id;
     skillSearch = '';
+    inventorySearch = '';
     spellFilters = {
       name: '',
       level: '',
@@ -2256,6 +2273,7 @@ async function importEquipmentModal(character, trigger) {
           notes: reference.notes,
           equipped: false,
         });
+        inventorySearch = '';
         changed();
         renderCharacter();
         toast(`${reference.name} imported.`);
@@ -3200,12 +3218,16 @@ const views = {
       >`,
     )}${panel(
       'Inventory',
-      c.equipment.length
-        ? '<div class="inventory-list">' +
+      `<input id="inventory-search" type="search" aria-label="Search items by name or notes" placeholder="Search items…" value="${esc(inventorySearch)}" />` +
+        (c.equipment.length
+          ? '<div class="inventory-list">' +
             c.equipment
               .map(
                 (e, i) =>
-                  /* HTML */ `<div class="inventory-row"
+                  /* HTML */ `<div
+                    class="inventory-row"
+                    data-inventory-index="${i}"
+                    ${inventoryMatches(e) ? '' : 'hidden'}
                     ><label class="check"
                       ><input
                         aria-label="${esc(e.name || 'Item')} equipped"
@@ -3217,10 +3239,11 @@ const views = {
               )
               .join('') +
             `</div><p class="help">Checkbox = equipped · Total carried weight: <strong>${c.equipment.reduce((n, e) => n + e.quantity * e.weight, 0).toFixed(1)} lb</strong> (all listed items; excludes coins)</p>`
-        : empty(
-            'Pack for the Journey',
-            'Track your gear, treasures, and the things you can’t leave behind.',
-          ),
+          : empty(
+              'Pack for the Journey',
+              'Track your gear, treasures, and the things you can’t leave behind.',
+            )) +
+        `<p id="inventory-search-empty" class="muted" role="status" ${!c.equipment.length || c.equipment.some(inventoryMatches) ? 'hidden' : ''}>No matching items.</p>`,
       `<div class="inventory-actions">${button('import-equipment', 'Import Equipment', 'secondary')}${button('add-item', '＋ Add item', 'secondary')}</div>`,
     )}`,
   background: (c) =>
@@ -4326,6 +4349,7 @@ document.addEventListener('click', async (e) => {
       break;
 
     case 'add-item':
+      inventorySearch = '';
       c.equipment.push({
         name: '',
         quantity: 1,
@@ -4742,6 +4766,11 @@ document.addEventListener('input', (e) => {
   if (el.id === 'skill-search') {
     skillSearch = el.value;
     renderCharacter();
+    return;
+  }
+  if (el.id === 'inventory-search') {
+    inventorySearch = el.value;
+    filterInventory(c);
     return;
   }
   if (el.id === 'journal-search') {
