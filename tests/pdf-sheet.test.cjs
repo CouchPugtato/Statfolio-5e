@@ -29,7 +29,7 @@ function setup() {
   dom.window.eval(fs.readFileSync('pdf-sheet.js', 'utf8'));
   dom.window.eval(
     fs.readFileSync('app.js', 'utf8').replace(/init\(\);\s*$/, '') +
-      '\nwindow.pdfTest = { blank, abilities, skills, mod, prof, sign };',
+      '\nwindow.pdfTest = { blank, abilities, skills, mod, prof, sign, statValue };',
   );
   const api = {
     create: (character, rules) =>
@@ -229,6 +229,48 @@ test('fills the original editable template with correct stats, spell rows, prepa
       }
     }
     preview('filled-template', bytes);
+  } finally {
+    dom.window.close();
+  }
+});
+
+test('PDF exports include equipped item bonuses in skills, saves, spellcasting and reference stats', async () => {
+  const { dom, api, rules } = setup();
+  try {
+    const c = sample(rules);
+    c.equipment.push({
+      name: 'Magic Ring',
+      quantity: 1,
+      weight: 0,
+      notes: '',
+      equipped: true,
+      bonuses: [
+        { target: 'ac', amount: 2 },
+        { target: 'speed', amount: 5 },
+        { target: 'initiative', amount: 1 },
+        { target: 'skill.Stealth', amount: 3 },
+        { target: 'save.2', amount: 2 },
+        { target: 'passivePerception', amount: 1 },
+        { target: 'spellDC', amount: 1 },
+        { target: 'spellAttack', amount: 2 },
+      ],
+    });
+    const before = JSON.stringify(c);
+    const form = (
+      await PDFLib.PDFDocument.load(await api.create(c, rules))
+    ).getForm();
+    for (const [name, expected] of [
+      ['AC', '18'],
+      ['Speed', '40'],
+      ['Initiative', '+5'],
+      ['Stealth ', '+13'],
+      ['ST Constitution', '+4'],
+      ['Passive', '17'],
+      ['SpellSaveDC  2', '15'],
+      ['SpellAtkBonus 2', '+8'],
+    ])
+      assert.equal(form.getTextField(name).getText(), expected, name);
+    assert.equal(JSON.stringify(c), before);
   } finally {
     dom.window.close();
   }

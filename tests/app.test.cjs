@@ -366,7 +366,7 @@ async function app(storage = new IDBFactory()) {
   w.eval(
     source.replace(/init\(\);\s*$/, '') +
       `
-    globalThis.api = { blank, prof, mod, views, validateBackup, persist, shell, renderCharacter, changed, exportBackup, backupRecommended, renderBackupStatus,
+    globalThis.api = { blank, prof, mod, statValue, bonusTargets, views, validateBackup, persist, shell, renderCharacter, changed, exportBackup, backupRecommended, renderBackupStatus,
       get state(){return state;},get revision(){return revision;},get savedRevision(){return savedRevision;},
       get failed(){return saveFailed;},get db(){return db;},setPage(p){page=p;shell();},
       use(c){state.characters.push(c);state.selected=c.id;shell();},get current(){return current();} };
@@ -960,6 +960,314 @@ test('expertise implies proficiency, bonuses update, and removing proficiency cl
   }
 });
 
+test('equipped item bonuses stack and flow through calculated stats without changing base values', async () => {
+  const a = await app();
+  try {
+    const c = a.api.blank('Magic Gear');
+    c.level = 5;
+    c.abilities = [12, 16, 14, 10, 14, 18];
+    c.spellAbility = 5;
+    c.saves = [2];
+    c.skills = ['Stealth', 'Perception'];
+    c.expertise = ['Perception'];
+    c.equipment = [
+      {
+        name: 'Ring',
+        quantity: 5,
+        weight: 0,
+        notes: '',
+        equipped: true,
+        bonuses: [
+          { target: 'ac', amount: 2 },
+          { target: 'proficiency', amount: 1 },
+          { target: 'skill.Perception', amount: 2 },
+          { target: 'passivePerception', amount: 1 },
+          { target: 'spellDC', amount: 1 },
+          { target: 'spellAttack', amount: 2 },
+          { target: 'save.2', amount: 2 },
+          { target: 'ability.1', amount: 1 },
+          { target: 'speed', amount: 10 },
+        ],
+      },
+      {
+        name: 'Cursed Boots',
+        quantity: 1,
+        weight: 0,
+        notes: '',
+        equipped: true,
+        bonuses: [
+          { target: 'ac', amount: -1 },
+          { target: 'initiative', amount: -2 },
+        ],
+      },
+      {
+        name: 'Packed Shield',
+        quantity: 1,
+        weight: 0,
+        notes: '',
+        equipped: false,
+        bonuses: [{ target: 'ac', amount: 3 }],
+      },
+    ];
+    a.api.use(c);
+    const value = (target) => a.api.statValue(c, target);
+    assert.equal(value('ac'), 11);
+    assert.equal(value('proficiency'), 4);
+    assert.equal(value('initiative'), 2);
+    assert.equal(value('speed'), 40);
+    assert.equal(value('skill.Stealth'), 8);
+    assert.equal(value('skill.Perception'), 12);
+    assert.equal(value('passivePerception'), 23);
+    assert.equal(value('save.2'), 8);
+    assert.equal(value('spellDC'), 17);
+    assert.equal(value('spellAttack'), 10);
+    const base = JSON.stringify({
+      ac: c.ac,
+      speed: c.speed,
+      abilities: c.abilities,
+      initiativeBonus: c.initiativeBonus,
+    });
+    a.api.setPage('abilities');
+    assert.match(
+      a.$('[data-skill="Stealth"]').parentElement.textContent,
+      /\+8/,
+    );
+    const save = a.$('[data-save="2"]').parentElement.querySelector('strong');
+    save.focus();
+    assert.match(a.$('.spell-popup-description').textContent, /Ring/);
+    a.api.setPage('spells');
+    assert.deepEqual(
+      Array.from(a.w.document.querySelectorAll('.spell-metrics strong'), (el) =>
+        el.textContent.trim(),
+      ),
+      ['17', '+10'],
+    );
+    a.api.setPage('equipment');
+    a.input('[data-field="equipment.0.equipped"]', false);
+    assert.equal(value('ac'), 9);
+    assert.equal(value('skill.Perception'), 8);
+    assert.equal(value('passivePerception'), 18);
+    assert.equal(value('spellDC'), 15);
+    assert.equal(
+      JSON.stringify({
+        ac: c.ac,
+        speed: c.speed,
+        abilities: c.abilities,
+        initiativeBonus: c.initiativeBonus,
+      }),
+      base,
+    );
+  } finally {
+    a.close();
+  }
+});
+
+test('item bonus editor supports searchable targets, signed amounts, removal, persistence, and strict backup validation', async () => {
+  const a = await app();
+  try {
+    const c = a.api.blank('Bonus Editor');
+    c.equipment.push({
+      name: 'Cloak',
+      quantity: 1,
+      weight: 1,
+      notes: '',
+      equipped: false,
+    });
+    a.api.use(c);
+    a.api.setPage('equipment');
+    assert.equal(a.$('.inventory-bonuses'), null);
+    a.click('[data-action="edit-item"][data-index="0"]');
+    a.click('[data-action="add-item-bonus"]');
+    assert.equal(a.$('.inventory-bonuses').open, true);
+    a.$('[data-item-bonus-target="0"]').focus();
+    assert.ok(a.$('[data-bonus-stat-option="skill.Stealth"]'));
+    a.input('[data-item-bonus-target="0"]', 'Stealth');
+    a.input('[data-item-bonus-amount="0"]', -2);
+    a.input('[data-field="equipment.0.equipped"]', true);
+    assert.equal(a.api.statValue(c, 'skill.Stealth'), -2);
+    a.input('[data-item-bonus-target="0"]', 'Not a stat');
+    assert.equal(c.equipment[0].bonuses[0].target, 'skill.Stealth');
+    assert.equal(a.$('[data-item-bonus-target="0"]').value, 'Stealth');
+    a.input('[data-item-bonus-amount="0"]', 1.5);
+    assert.equal(c.equipment[0].bonuses[0].amount, -2);
+    a.api.renderCharacter();
+    assert.match(a.$('.inventory-bonuses summary').textContent, /Stealth -2/);
+    const backup = () => ({
+      format: 'statfolio',
+      version: 1,
+      characters: [JSON.parse(JSON.stringify(c))],
+    });
+    assert.equal(
+      a.api.validateBackup(backup())[0].equipment[0].bonuses[0].amount,
+      -2,
+    );
+    for (const invalid of [
+      null,
+      [{ target: '__proto__', amount: 1 }],
+      [{ target: 'ac', amount: '1' }],
+      [{ target: 'ac', amount: 0.5 }],
+      [{ target: 'ac', amount: Number.MAX_SAFE_INTEGER }],
+    ]) {
+      const data = backup();
+      data.characters[0].equipment[0].bonuses = invalid;
+      assert.throws(() => a.api.validateBackup(data), /bonus|supported range/i);
+    }
+    await a.api.persist();
+    const b = await app(a.storage);
+    try {
+      assert.equal(b.api.statValue(b.api.current, 'skill.Stealth'), -2);
+      assert.equal(
+        b.api.current.equipment[0].bonuses[0].target,
+        'skill.Stealth',
+      );
+    } finally {
+      b.close();
+    }
+    a.click('[data-action="remove-item-bonus"]');
+    assert.equal(a.api.statValue(c, 'skill.Stealth'), 0);
+    assert.equal(c.equipment[0].bonuses.length, 0);
+  } finally {
+    a.close();
+  }
+});
+
+test('bonus stat suggestions reopen with all choices and support searching, pointer selection and keyboard selection', async () => {
+  const a = await app();
+  try {
+    const c = a.api.blank('Stat Picker');
+    c.equipment.push({
+      name: 'Ring',
+      notes: '',
+      quantity: 1,
+      weight: 0,
+      equipped: true,
+      bonuses: [{ target: 'ac', amount: 1 }],
+    });
+    a.api.use(c);
+    a.api.setPage('equipment');
+    for (let attempt = 0; attempt < 3; attempt++) {
+      a.click('[data-action="edit-item"]');
+      const input = a.$('[data-item-bonus-target="0"]');
+      input.focus();
+      assert.equal(a.$('.bonus-stat-options').hidden, false);
+      assert.equal(
+        a.w.document.querySelectorAll('[data-bonus-stat-option]').length,
+        a.api.bonusTargets.size,
+      );
+      a.click('.bonus-stat-toggle');
+      assert.equal(a.$('.bonus-stat-options').hidden, true);
+      a.click('.bonus-stat-toggle');
+      assert.equal(a.$('.bonus-stat-options').hidden, false);
+      a.input('[data-item-bonus-target="0"]', 'steal', false);
+      assert.equal(
+        a.w.document.querySelectorAll('[data-bonus-stat-option]').length,
+        1,
+      );
+      a.click('[data-bonus-stat-option="skill.Stealth"]');
+      assert.equal(c.equipment[0].bonuses[0].target, 'skill.Stealth');
+      assert.ok(a.$('[data-item-editor]'));
+      assert.equal(a.$('.bonus-stat-options').hidden, true);
+      await settle();
+      a.click('.bonus-stat-toggle');
+      assert.equal(
+        a.w.document.querySelectorAll('[data-bonus-stat-option]').length,
+        a.api.bonusTargets.size,
+      );
+      a.input('[data-item-bonus-target="0"]', 'Armor', false);
+      input.dispatchEvent(
+        new a.w.KeyboardEvent('keydown', {
+          key: 'ArrowDown',
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      assert.ok(input.getAttribute('aria-activedescendant'));
+      input.dispatchEvent(
+        new a.w.KeyboardEvent('keydown', {
+          key: 'Enter',
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      assert.equal(c.equipment[0].bonuses[0].target, 'ac');
+      assert.equal(input.value, 'Armor Class');
+      assert.ok(a.$('[data-item-editor]'));
+      a.click('[data-action="finish-item"]');
+    }
+  } finally {
+    a.close();
+  }
+});
+
+test('inventory modifier filter combines with search, preserves navigation state, and resets for new items and characters', async () => {
+  const a = await app();
+  try {
+    const c = a.api.blank('Filtered Gear');
+    c.equipment = [
+      { name: 'Rope', notes: '', quantity: 1, weight: 5, equipped: false },
+      {
+        name: 'Shield',
+        notes: '',
+        quantity: 1,
+        weight: 6,
+        equipped: true,
+        bonuses: [{ target: 'ac', amount: 2 }],
+      },
+      {
+        name: 'Ring',
+        notes: 'Magic',
+        quantity: 1,
+        weight: 0,
+        equipped: false,
+        bonuses: [{ target: 'spellDC', amount: 1 }],
+      },
+    ];
+    a.api.use(c);
+    a.api.setPage('equipment');
+    const revision = a.api.revision;
+    a.click('[data-action="filter-item-modifiers"]');
+    assert.equal(
+      a.$('[data-action="filter-item-modifiers"]').getAttribute('aria-pressed'),
+      'true',
+    );
+    assert.equal(a.$('[data-inventory-index="0"]').hidden, true);
+    assert.equal(a.$('[data-inventory-index="1"]').hidden, false);
+    assert.equal(a.$('[data-inventory-index="2"]').hidden, false);
+    a.input('#inventory-search', 'magic');
+    assert.equal(a.$('[data-inventory-index="1"]').hidden, true);
+    assert.equal(a.$('[data-inventory-index="2"]').hidden, false);
+    a.input('#inventory-search', 'rope');
+    assert.equal(a.$('#inventory-search-empty').hidden, false);
+    a.click('[data-action="filter-item-modifiers"]');
+    assert.equal(a.$('[data-inventory-index="0"]').hidden, false);
+    a.click('[data-action="filter-item-modifiers"]');
+    a.api.setPage('combat');
+    a.api.setPage('equipment');
+    assert.equal(
+      a.$('[data-action="filter-item-modifiers"]').getAttribute('aria-pressed'),
+      'true',
+    );
+    assert.equal(a.$('#inventory-search').value, 'rope');
+    assert.equal(a.$('[data-inventory-index="0"]').hidden, true);
+    assert.equal(a.api.revision, revision);
+    a.click('[data-action="add-item"]');
+    assert.equal(
+      a.$('[data-action="filter-item-modifiers"]').getAttribute('aria-pressed'),
+      'false',
+    );
+    assert.equal(a.$('[data-inventory-index="3"]').hidden, false);
+    a.click('[data-action="filter-item-modifiers"]');
+    a.api.use(a.api.blank('Other Character'));
+    a.api.setPage('equipment');
+    assert.equal(
+      a.$('[data-action="filter-item-modifiers"]').getAttribute('aria-pressed'),
+      'false',
+    );
+  } finally {
+    a.close();
+  }
+});
+
 test('inventory search matches names and notes while preserving item indices, weight totals, and search state', async () => {
   const a = await app();
   try {
@@ -999,6 +1307,7 @@ test('inventory search matches names and notes while preserving item indices, we
     a.api.setPage('equipment');
     assert.equal(a.$('#inventory-search').value, '  SILVER ');
     assert.equal(a.$('[data-inventory-index="0"]').hidden, true);
+    a.click('[data-action="edit-item"][data-index="1"]');
     a.click('[data-inventory-index="1"] [data-action="remove"]');
     await a.submit();
     assert.deepEqual(
@@ -1021,6 +1330,87 @@ test('inventory search matches names and notes while preserving item indices, we
   }
 });
 
+test('items switch between compact summaries and one editor, with bonuses beside notes only when present', async () => {
+  const a = await app();
+  try {
+    const c = a.api.blank('Compact Items');
+    c.equipment = [
+      {
+        name: 'Rope',
+        notes: 'Silk rope',
+        quantity: 1,
+        weight: 5,
+        equipped: false,
+      },
+      {
+        name: 'Cloak',
+        notes: '**Magic** cloak',
+        quantity: 1,
+        weight: 1,
+        equipped: true,
+        bonuses: [{ target: 'ac', amount: 1 }],
+      },
+    ];
+    a.api.use(c);
+    a.api.setPage('equipment');
+    const plain = a.$('[data-inventory-index="0"]');
+    const magic = a.$('[data-inventory-index="1"]');
+    assert.equal(plain.querySelector('.inventory-bonuses'), null);
+    assert.equal(plain.querySelector('[data-action="add-item-bonus"]'), null);
+    assert.equal(
+      magic.querySelector('.inventory-notes').parentElement,
+      magic.querySelector('.inventory-bonuses').parentElement,
+    );
+    assert.equal(
+      magic
+        .querySelector('.inventory-item-details')
+        .classList.contains('has-bonuses'),
+      true,
+    );
+    assert.equal(
+      magic.querySelector('.inventory-notes-preview strong').textContent,
+      'Magic',
+    );
+    a.click('[data-action="edit-item"][data-index="0"]');
+    a.input('[data-field="equipment.0.name"]', 'Long Rope');
+    a.click('[data-action="edit-item"][data-index="1"]');
+    assert.equal(a.w.document.querySelectorAll('[data-item-editor]').length, 1);
+    assert.equal(a.$('[data-item-editor]').dataset.itemEditor, '1');
+    assert.equal(
+      a.$('[data-inventory-index="0"] .inventory-item-summary strong')
+        .textContent,
+      'Long Rope',
+    );
+    a.input('[data-field="equipment.1.quantity"]', 2);
+    a.click('#inventory-search');
+    assert.equal(a.$('[data-item-editor]'), null);
+    assert.match(
+      a.$('[data-inventory-index="1"] .inventory-item-meta').textContent,
+      /2 ×/,
+    );
+    a.click('[data-action="edit-item"][data-index="1"]');
+    a.click('[data-action="remove-item-bonus"]');
+    assert.ok(a.$('[data-item-editor]'));
+    assert.ok(a.$('[data-action="add-item-bonus"]'));
+    a.click('[data-action="finish-item"]');
+    assert.equal(a.$('[data-item-bonuses="1"]'), null);
+    a.click('[data-action="add-item"]');
+    assert.equal(a.$('[data-item-editor]').dataset.itemEditor, '2');
+    assert.equal(
+      a.w.document.activeElement,
+      a.$('[data-item-editor] .inventory-item-name'),
+    );
+    a.click('[data-action="finish-item"]');
+    assert.equal(a.$('[data-inventory-index="2"] .inventory-notes'), null);
+    assert.equal(
+      a.$('[data-inventory-index="2"] .inventory-item-details'),
+      null,
+    );
+  } finally {
+    a.close();
+  }
+});
+
 test('item notes expand, retain their state during updates, and save multiline text safely', async () => {
   const a = await app();
   try {
@@ -1036,21 +1426,28 @@ test('item notes expand, retain their state during updates, and save multiline t
     a.api.setPage('equipment');
     const details = a.$('.inventory-notes');
     assert.equal(details.open, false);
-    assert.equal(a.$('[data-field="equipment.0.notes"]').tagName, 'TEXTAREA');
+    assert.equal(a.$('[data-field="equipment.0.notes"]'), null);
     details.open = true;
     await settle();
+    a.click('[data-action="edit-item"][data-index="0"]');
+    assert.equal(a.$('[data-field="equipment.0.notes"]').tagName, 'TEXTAREA');
     const notes =
       'Ancient relic\n<script>not executable</script>\nFound in a crypt';
     a.input('[data-field="equipment.0.notes"]', notes);
     assert.equal(c.equipment[0].notes, notes);
+    a.click('[data-action="finish-item"]');
     assert.equal(
       a.$('.inventory-notes-preview').textContent,
       notes.replace(/\s+/g, ' '),
     );
     a.api.shell();
     assert.equal(a.$('.inventory-notes').open, true);
-    assert.equal(a.$('[data-field="equipment.0.notes"]').value, notes);
+    assert.equal(a.$('.item-note-content').textContent, notes);
     assert.equal(a.$('.inventory-notes script'), null);
+    a.click('[data-action="edit-item"][data-index="0"]');
+    assert.equal(a.$('[data-field="equipment.0.notes"]').value, notes);
+    a.click('#inventory-search');
+    assert.equal(a.$('[data-item-editor]'), null);
     a.$('.inventory-notes').open = false;
     await settle();
     a.api.shell();
@@ -1080,11 +1477,8 @@ test('item handles reorder by pointer and keyboard, preserve filtered items, and
     }));
     a.api.use(c);
     a.api.setPage('equipment');
-    assert.equal(
-      a.$('.inventory-item-name').getAttribute('aria-label'),
-      'Item name',
-    );
-    assert.equal(a.$('.inventory-item-name').closest('label'), null);
+    assert.equal(a.$('.inventory-item-name'), null);
+    assert.equal(a.$('.inventory-item-summary strong').textContent, 'Rope');
     const pointer = (target, type, x, y) => {
       const event = new a.w.MouseEvent(type, {
         bubbles: true,
@@ -1140,6 +1534,7 @@ test('item handles reorder by pointer and keyboard, preserve filtered items, and
     pointer(a.w.document, 'pointercancel', 0, 10);
     pointer(a.w.document, 'pointerup', 0, 10);
     assert.equal(JSON.stringify(c.equipment), beforeCancel);
+    a.click('[data-action="edit-item"][data-index="2"]');
     a.input('[data-field="equipment.2.name"]', 'Healing Potion');
     assert.equal(c.equipment[2].name, 'Healing Potion');
     await a.api.persist();
@@ -1280,6 +1675,8 @@ test('bullet shortcuts work in every multiline sheet field and level-up drafts w
     for (const [page, path, add] of cases) {
       a.api.setPage(page);
       if (add) a.click(`[data-action="${add}"]`);
+      if (page === 'equipment')
+        a.click('[data-action="edit-item"][data-index="0"]');
       const selector = `[data-field="${path}"]`;
       const el = a.$(selector);
       assert.equal(el.tagName, 'TEXTAREA');
@@ -1410,7 +1807,7 @@ test('all removable boxes share confirmation, support cancellation, and undo wit
         'equipment',
         'equipment',
         { name: 'Rope', quantity: 2, weight: 5, notes: 'Silk', equipped: true },
-        null,
+        '[data-action="edit-item"][data-index="0"]',
       ],
       [
         'spells',
@@ -1492,6 +1889,7 @@ test('deletion undo preserves text undo and stays with the character across page
     a.api.use(c);
     a.api.setPage('equipment');
     for (let i = 0; i < 2; i++) {
+      a.click('[data-action="edit-item"][data-index="0"]');
       a.click('[data-action="remove"][data-list="equipment"]');
       await a.submit();
     }
@@ -2641,9 +3039,11 @@ test('inventory totals update on quantity edits before blur, removal, and reload
     ];
     a.api.use(c);
     a.api.setPage('equipment');
+    a.click('[data-action="edit-item"][data-index="0"]');
     a.input('[data-field="equipment.0.quantity"]', 3, false);
     await settle();
     assert.match(a.$('#page-content').textContent, /13.8 lb/);
+    a.click('[data-action="edit-item"][data-index="1"]');
     a.click('[data-action="remove"][data-index="1"]');
     await a.submit();
     assert.match(a.$('#page-content').textContent, /1.5 lb/);
@@ -2879,9 +3279,10 @@ test('concentration tracks one spell across pages and queues saves for each dama
     }));
     a.api.use(c);
     a.api.setPage('spells');
-    a.input('#concentration-spell', '0');
+    a.click('[data-action="start-concentration"][data-index="0"]');
     assert.equal(c.concentrationSpell, 'Bless');
-    assert.match(a.$('.concentration-heading').textContent, /Bless/);
+    assert.equal(a.$('.concentration-tracker'), null);
+    assert.ok(a.$('[data-action="end-concentration"][data-index="0"]'));
     a.api.setPage('combat');
     a.input('#hp-amount', '9');
     a.click('[data-action="damage"]');
@@ -3390,9 +3791,18 @@ test('concentrate buttons work from both spell lists without opening editors or 
     );
     c.concentrationDamage = [25];
     a.api.setPage('spells');
-    a.click('[data-action="start-concentration"][data-index="2"]');
-    assert.deepEqual(Array.from(c.concentrationDamage), [25]);
-    a.input('#concentration-spell', '2');
+    assert.equal(a.$('.concentration-tracker'), null);
+    assert.equal(a.$('#concentration-spell'), null);
+    assert.equal(
+      a.$('[data-action="end-concentration"][data-index="2"]').disabled,
+      false,
+    );
+    assert.equal(
+      a
+        .$('[data-action="end-concentration"][data-index="2"]')
+        .getAttribute('aria-pressed'),
+      'true',
+    );
     assert.deepEqual(Array.from(c.concentrationDamage), [25]);
     a.click('[data-action="start-concentration"][data-index="0"]');
     assert.equal(c.concentrationSpell, 'Higher ward');
@@ -3945,6 +4355,7 @@ test('equipment reference searches, filters, previews, and imports editable item
     });
     assert.equal(c.coins.gp, 100);
     assert.match(a.$('#page-content').textContent, /20.0 lb/);
+    a.click('[data-action="edit-item"][data-index="0"]');
     a.input('[data-field="equipment.0.name"]', 'My rope');
     a.click('[data-action="import-equipment"]');
     await settle();

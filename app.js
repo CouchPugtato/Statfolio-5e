@@ -44,6 +44,104 @@ const skills = {
   Survival: 4,
 };
 
+const bonusTargets = new Map([
+  ['ac', 'Armor Class'],
+  ['speed', 'Speed'],
+  ['initiative', 'Initiative'],
+  ['proficiency', 'Proficiency Bonus'],
+  ['passivePerception', 'Passive Perception'],
+  ['spellDC', 'Spell Save DC'],
+  ['spellAttack', 'Spell Attack Bonus'],
+  ...abilities.map((name, index) => [`ability.${index}`, `${name} Modifier`]),
+  ...abilities.map((name, index) => [`save.${index}`, `${name} Save`]),
+  ...Object.keys(skills).map((name) => [`skill.${name}`, name]),
+]);
+
+function statValue(character, target) {
+  const proficiency = () => statValue(character, 'proficiency');
+  let base;
+  if (target.startsWith('ability.')) {
+    base = mod(character.abilities[Number(target.slice(8))]);
+  } else if (target.startsWith('save.')) {
+    const index = Number(target.slice(5));
+    base =
+      statValue(character, `ability.${index}`) +
+      (character.saves.includes(index) ? proficiency() : 0);
+  } else if (target.startsWith('skill.')) {
+    const name = target.slice(6);
+    const expert = character.expertise.includes(name);
+    base =
+      statValue(character, `ability.${skills[name]}`) +
+      (expert ? 2 : character.skills.includes(name) ? 1 : 0) * proficiency();
+  } else {
+    switch (target) {
+      case 'ac':
+        base = character.ac;
+        break;
+      case 'speed':
+        base = character.speed;
+        break;
+      case 'initiative':
+        base = statValue(character, 'ability.1') + character.initiativeBonus;
+        break;
+      case 'proficiency':
+        base = prof(character);
+        break;
+      case 'passivePerception':
+        base = 10 + statValue(character, 'skill.Perception');
+        break;
+      case 'spellDC':
+        base =
+          8 +
+          proficiency() +
+          statValue(character, `ability.${character.spellAbility}`);
+        break;
+      case 'spellAttack':
+        base =
+          proficiency() +
+          statValue(character, `ability.${character.spellAbility}`);
+        break;
+      default:
+        throw Error('Unknown item bonus target.');
+    }
+  }
+  return (
+    base +
+    (character.equipment || [])
+      .filter((item) => item.equipped)
+      .reduce(
+        (total, item) =>
+          total +
+          (item.bonuses || [])
+            .filter((bonus) => bonus.target === target)
+            .reduce((sum, bonus) => sum + bonus.amount, 0),
+        0,
+      )
+  );
+}
+
+function statHint(character, target) {
+  const base = { ...character, equipment: [] };
+  const initial = statValue(base, target);
+  const contributions = (character.equipment || [])
+    .filter((item) => item.equipped)
+    .map((item) => ({
+      name: item.name || 'Unnamed Item',
+      amount: statValue({ ...base, equipment: [item] }, target) - initial,
+    }))
+    .filter((entry) => entry.amount);
+  if (!contributions.length) return '';
+  const breakdown = `${initial} base ${contributions.map((entry) => `${sign(entry.amount)} ${entry.name}`).join(' ')} = ${statValue(character, target)}`;
+  return `tabindex="0" aria-label="${esc(breakdown)}" data-stat-breakdown="${esc(breakdown)}"`;
+}
+
+function baseStatField(character, label, path, target) {
+  const effective = statValue(character, target);
+  const original = statValue({ ...character, equipment: [] }, target);
+  if (effective === original) return field(label, path, 'number');
+  return `<div class="item-stat-field">${field(label, path, 'number')}<small ${statHint(character, target)}>${target === 'initiative' ? sign(effective) : effective} total</small></div>`;
+}
+
 const pages = [
   ['overview', 'Character', '◈'],
   ['abilities', 'Skills', '◇'],
@@ -130,6 +228,7 @@ let noteFilter = 'all';
 let journalCharacterId = null;
 let editingAttack = null;
 let editingSpell = null;
+let editingItem = null;
 let spellFilters = {
   name: '',
   level: '',
@@ -223,10 +322,149 @@ let spellPopup = null;
 let spellPopupCard = null;
 let skillSearch = '';
 let inventorySearch = '';
+let inventoryModifiersOnly = false;
 const expandedItemNotes = new WeakSet();
+const expandedItemBonuses = new WeakSet();
 let skillCharacterId = null;
 
+function bonusStatPicker(bonus, itemIndex, bonusIndex) {
+  const id = `bonus-stat-options-${itemIndex}-${bonusIndex}`;
+  return `<div class="bonus-stat-picker"><input type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="${id}" autocomplete="off" aria-label="Bonus stat" placeholder="Find a stat…" data-item-bonus-target="${itemIndex}" data-bonus-index="${bonusIndex}" value="${esc(bonusTargets.get(bonus.target))}" /><button type="button" class="bonus-stat-toggle" aria-label="Show all bonus stats" aria-expanded="false">▾</button><div class="bonus-stat-options" role="listbox" aria-label="Bonus stats" id="${id}" hidden></div></div>`;
+}
+
+function closeBonusStatPickers() {
+  for (const picker of document.querySelectorAll('.bonus-stat-picker')) {
+    $('.bonus-stat-options', picker).hidden = true;
+    $('input', picker).setAttribute('aria-expanded', 'false');
+    $('input', picker).removeAttribute('aria-activedescendant');
+    $('.bonus-stat-toggle', picker).setAttribute('aria-expanded', 'false');
+  }
+}
+
+function openBonusStatPicker(picker, query = '') {
+  closeBonusStatPickers();
+  const input = $('input', picker);
+  const options = $('.bonus-stat-options', picker);
+  const matches = [...bonusTargets].filter(([, label]) =>
+    label.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()),
+  );
+  options.innerHTML =
+    matches
+      .map(
+        ([target, label], index) =>
+          `<button type="button" role="option" tabindex="-1" id="${options.id}-${index}" data-bonus-stat-option="${esc(target)}" aria-selected="false">${esc(label)}</button>`,
+      )
+      .join('') || '<span class="muted">No matching stats.</span>';
+  options.hidden = false;
+  input.setAttribute('aria-expanded', 'true');
+  $('.bonus-stat-toggle', picker).setAttribute('aria-expanded', 'true');
+}
+
+function chooseBonusStat(option) {
+  const picker = option.closest('.bonus-stat-picker');
+  const input = $('input', picker);
+  input.value = bonusTargets.get(option.dataset.bonusStatOption);
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+  closeBonusStatPickers();
+  input.focus();
+  closeBonusStatPickers();
+}
+
+document.addEventListener('pointerdown', (event) => {
+  if (event.target.closest('.bonus-stat-toggle, [data-bonus-stat-option]'))
+    event.preventDefault();
+});
+
+document.addEventListener('focusin', (event) => {
+  if (event.target.matches('[data-item-bonus-target]'))
+    openBonusStatPicker(event.target.closest('.bonus-stat-picker'));
+  else if (!event.target.closest('.bonus-stat-picker')) closeBonusStatPickers();
+});
+
+document.addEventListener('click', (event) => {
+  const picker = event.target.closest('.bonus-stat-picker');
+  if (!picker) {
+    closeBonusStatPickers();
+    return;
+  }
+  const option = event.target.closest('[data-bonus-stat-option]');
+  if (option) {
+    chooseBonusStat(option);
+    return;
+  }
+  const input = $('input', picker);
+  if (event.target.closest('.bonus-stat-toggle')) {
+    const wasOpen = !$('.bonus-stat-options', picker).hidden;
+    input.focus();
+    if (wasOpen) closeBonusStatPickers();
+    else openBonusStatPicker(picker);
+  } else if (event.target === input) openBonusStatPicker(picker);
+});
+
+document.addEventListener('keydown', (event) => {
+  const input = event.target;
+  if (!input.matches('[data-item-bonus-target]')) return;
+  const picker = input.closest('.bonus-stat-picker');
+  const list = $('.bonus-stat-options', picker);
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closeBonusStatPickers();
+    return;
+  }
+  if (event.key === 'Tab') {
+    closeBonusStatPickers();
+    return;
+  }
+  if (!['ArrowDown', 'ArrowUp', 'Enter'].includes(event.key)) return;
+  if (event.key === 'Enter' && list.hidden) return;
+  event.preventDefault();
+  if (list.hidden) openBonusStatPicker(picker);
+  const options = [...list.querySelectorAll('[role="option"]')];
+  if (!options.length) return;
+  const active = options.findIndex(
+    (option) => option.id === input.getAttribute('aria-activedescendant'),
+  );
+  if (event.key === 'Enter') {
+    chooseBonusStat(options[Math.max(0, active)]);
+    return;
+  }
+  const next =
+    active < 0
+      ? event.key === 'ArrowDown'
+        ? 0
+        : options.length - 1
+      : (active + (event.key === 'ArrowDown' ? 1 : -1) + options.length) %
+        options.length;
+  options.forEach((option, index) =>
+    option.setAttribute('aria-selected', String(index === next)),
+  );
+  input.setAttribute('aria-activedescendant', options[next].id);
+  options[next].scrollIntoView?.({ block: 'nearest' });
+});
+
+function itemBonuses(item, index, editing = false) {
+  const bonuses = item.bonuses || [];
+  const summary =
+    bonuses
+      .map((bonus) => `${bonusTargets.get(bonus.target)} ${sign(bonus.amount)}`)
+      .join(' · ') || 'Add Bonus…';
+  if (!editing) {
+    if (!bonuses.length) return '';
+    return `<details class="inventory-bonuses" data-item-bonuses="${index}" ${expandedItemBonuses.has(item) ? 'open' : ''}><summary><span>Bonuses</span><span class="inventory-notes-preview">${esc(summary)}</span></summary><div class="item-bonus-summary">${bonuses.map((bonus) => `<span>${esc(bonusTargets.get(bonus.target))} <strong>${sign(bonus.amount)}</strong></span>`).join('')}</div></details>`;
+  }
+  if (!bonuses.length)
+    return button(
+      'add-item-bonus',
+      '＋ Add Bonus',
+      'text-button',
+      `data-index="${index}"`,
+    );
+  return `<details class="inventory-bonuses" data-item-bonuses="${index}" ${expandedItemBonuses.has(item) ? 'open' : ''}><summary><span>Bonuses</span><span class="inventory-notes-preview">${esc(summary)}</span></summary><div class="item-bonus-list">${bonuses.map((bonus, bonusIndex) => `<div class="item-bonus-row">${bonusStatPicker(bonus, index, bonusIndex)}<input type="number" step="1" aria-label="Bonus amount" data-item-bonus-amount="${index}" data-bonus-index="${bonusIndex}" value="${bonus.amount}" />${button('remove-item-bonus', '×', 'icon-button', `data-index="${index}" data-bonus-index="${bonusIndex}" aria-label="Remove bonus"`)}</div>`).join('')}${button('add-item-bonus', '＋ Add Bonus', 'text-button', `data-index="${index}"`)}</div></details>`;
+}
+
 function itemNotes(item, index) {
+  if (!item.notes.trim()) return '';
   const preview = item.notes.trim().replace(/\s+/g, ' ') || 'Add notes…';
   return /* HTML */ `<details
     class="inventory-notes"
@@ -239,21 +477,29 @@ function itemNotes(item, index) {
         >${formatText(preview)}</span
       ></summary
     >
-    <textarea
-      rows="2"
-      data-field="equipment.${index}.notes"
-      aria-label="Notes for ${esc(item.name || 'item')}"
-      placeholder="Description, properties, or reminders…"
+    <div class="item-note-content"
+      >${formatText(item.notes) || '<span class="muted">No notes.</span>'}</div
     >
-${esc(item.notes)}</textarea>
   </details>`;
+}
+
+function inventoryRecord(item, index) {
+  const editing = editingItem === item;
+  const name = esc(item.name || 'Unnamed Item');
+  const details = itemNotes(item, index) + itemBonuses(item, index);
+  const editor = `<div class="inventory-item-edit" data-item-editor="${index}"><div class="item-edit-top"><input class="inventory-item-name" type="text" data-field="equipment.${index}.name" value="${esc(item.name)}" aria-label="Item name" placeholder="Item name" />${button('finish-item', 'Done', 'secondary compact-button')}${button('remove', '×', 'icon-button', `data-list="equipment" data-index="${index}" aria-label="Remove item"`)}</div><div class="form-grid">${field('Quantity', `equipment.${index}.quantity`, 'number')}${field('Weight (lb Each)', `equipment.${index}.weight`, 'number')}</div><div class="inventory-item-details has-bonuses">${area('Notes', `equipment.${index}.notes`)}${itemBonuses(item, index, true)}</div></div>`;
+  const compact = `<button type="button" class="inventory-item-summary" data-action="edit-item" data-index="${index}" aria-label="Edit ${name}"><strong>${name}</strong><span class="inventory-item-meta"><strong>${item.quantity}</strong> × · ${item.weight} lb each</span><span class="attack-edit-label">Edit</span></button>${details ? `<div class="inventory-item-details ${item.notes.trim() && item.bonuses?.length ? 'has-bonuses' : ''}">${details}</div>` : ''}`;
+  return `<div class="inventory-row" data-inventory-index="${index}" ${inventoryMatches(item) ? '' : 'hidden'}><div class="inventory-item-controls"><button type="button" class="inventory-drag-handle icon-button" aria-label="Move ${name}" title="Drag to reorder; use Up or Down arrow keys when focused"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="M3 5h12M3 9h12M3 13h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></svg></button><label class="check"><input aria-label="${name} equipped" type="checkbox" data-field="equipment.${index}.equipped" ${item.equipped ? 'checked' : ''} /></label></div><div class="inventory-item-content">${editing ? editor : compact}</div></div>`;
 }
 
 function inventoryMatches(item) {
   const query = inventorySearch.trim().toLocaleLowerCase();
-  return `${item.name} ${window.StatfolioText.plain(item.notes)}`
-    .toLocaleLowerCase()
-    .includes(query);
+  return (
+    (!inventoryModifiersOnly || Boolean(item.bonuses?.length)) &&
+    `${item.name} ${window.StatfolioText.plain(item.notes)}`
+      .toLocaleLowerCase()
+      .includes(query)
+  );
 }
 
 // Keep item objects intact so expanded notes and other item data follow the move.
@@ -724,7 +970,9 @@ function renderLibrary() {
                   ></h3
                 ><div class="card-stats"
                   ><span>${healthReadout(c)} HIT POINTS</span
-                  ><span><strong>${c.ac}</strong> ARMOR CLASS</span
+                  ><span
+                    ><strong ${statHint(c, 'ac')}>${statValue(c, 'ac')}</strong>
+                    ARMOR CLASS</span
                   ><span><strong>${c.notes.length}</strong> NOTES</span></div
                 ><div class="card-bottom"
                   ><span
@@ -748,6 +996,7 @@ function renderCharacter() {
     skillCharacterId = c.id;
     skillSearch = '';
     inventorySearch = '';
+    inventoryModifiersOnly = false;
     spellFilters = {
       name: '',
       level: '',
@@ -758,6 +1007,7 @@ function renderCharacter() {
     };
     editingAttack = null;
     editingSpell = null;
+    editingItem = null;
   }
   const html = /* HTML */ `<button
       class="back-link text-button"
@@ -1094,7 +1344,7 @@ const panel = (title, body, extra = '') =>
 
 function abilityTiles(c) {
   return /* HTML */ `<div class="ability-grid"
-    >${abilities.map((a, i) => /* HTML */ `<div class="ability-tile"><span>${a}</span><strong>${sign(mod(c.abilities[i]))}</strong><input type="number" min="1" max="30" aria-label="${a} score" data-field="abilities.${i}" value="${c.abilities[i]}" /></div>`).join('')}</div
+    >${abilities.map((a, i) => /* HTML */ `<div class="ability-tile"><span>${a}</span><strong ${statHint(c, `ability.${i}`)}>${sign(statValue(c, `ability.${i}`))}</strong><input type="number" min="1" max="30" aria-label="${a} score" data-field="abilities.${i}" value="${c.abilities[i]}" /></div>`).join('')}</div
   >`;
 }
 
@@ -1141,12 +1391,13 @@ function spellCardActions(character, spell, index) {
     `data-index="${index}" aria-label="Cast ${esc(spell.name)}"`,
   );
   const active = character.concentrationSpell === spell.name.trim();
+  const canEnd = active && page === 'spells';
   const concentration = spellFlag(spell, 'concentration')
     ? button(
-        'start-concentration',
-        active ? 'Concentrating' : 'Concentrate',
+        canEnd ? 'end-concentration' : 'start-concentration',
+        canEnd ? 'End' : active ? 'Concentrating' : 'Concentrate',
         'secondary',
-        `data-index="${index}" aria-label="${active ? 'Concentrating on' : 'Concentrate on'} ${esc(spell.name)}" aria-pressed="${active}" ${active ? 'disabled' : ''}`,
+        `data-index="${index}" aria-label="${canEnd ? 'End concentration on' : active ? 'Concentrating on' : 'Concentrate on'} ${esc(spell.name)}" aria-pressed="${active}" ${active && !canEnd ? 'disabled' : ''}`,
       )
     : '';
   return `<div class="spell-card-actions">${cast}${concentration}</div>`;
@@ -1256,9 +1507,7 @@ function concentrationTracker(character, showLabel = true) {
     .filter(
       ({ spell }) => spellFlag(spell, 'concentration') && spell.name.trim(),
     );
-  const saveBonus =
-    mod(character.abilities[2]) +
-    (character.saves.includes(2) ? prof(character) : 0);
+  const saveBonus = statValue(character, 'save.2');
   const reminder =
     active && damage.length
       ? `<div class="concentration-reminder" role="status"><span><strong>Constitution save · DC ${Math.max(10, Math.floor(damage[0] / 2))}</strong><small>${damage[0]} damage · Save bonus ${sign(saveBonus)}${damage.length > 1 ? ` · ${damage.length} saves pending` : ''}</small></span><div class="concentration-actions">${button('concentration-pass', 'Pass', 'secondary')}${button('concentration-fail', 'Fail', 'secondary danger')}</div></div>`
@@ -1755,13 +2004,13 @@ function spellcastingSummary(c) {
     ><div class="spell-metrics"
       ><div class="spell-stat"
         ><span>Save DC</span
-        ><strong class="big-number"
-          >${8 + prof(c) + mod(c.abilities[c.spellAbility])}</strong
+        ><strong class="big-number" ${statHint(c, 'spellDC')}
+          >${statValue(c, 'spellDC')}</strong
         ></div
       ><div class="spell-stat"
         ><span>Attack bonus</span
-        ><strong class="big-number"
-          >${sign(prof(c) + mod(c.abilities[c.spellAbility]))}</strong
+        ><strong class="big-number" ${statHint(c, 'spellAttack')}
+          >${sign(statValue(c, 'spellAttack'))}</strong
         ></div
       ></div
     ><label class="field casting-ability"
@@ -2132,6 +2381,11 @@ function showReferencePopup(card, title, descriptionText) {
 
 document.addEventListener('pointerover', (event) => {
   if (event.pointerType === 'touch') return;
+  const stat = event.target.closest('[data-stat-breakdown]');
+  if (stat) {
+    showReferencePopup(stat, 'Item Bonuses', stat.dataset.statBreakdown);
+    return;
+  }
   const card = event.target.closest(
     '.spell-record-summary, .combat-spell-summary',
   );
@@ -2152,6 +2406,11 @@ document.addEventListener('pointerout', (event) => {
 });
 
 document.addEventListener('focusin', (event) => {
+  const stat = event.target.closest('[data-stat-breakdown]');
+  if (stat) {
+    showReferencePopup(stat, 'Item Bonuses', stat.dataset.statBreakdown);
+    return;
+  }
   const card = event.target.closest(
     '.spell-record-summary, .combat-spell-summary',
   );
@@ -2562,6 +2821,7 @@ async function importEquipmentModal(character, trigger) {
           equipped: false,
         });
         inventorySearch = '';
+        inventoryModifiersOnly = false;
         changed();
         renderCharacter();
         toast(`${reference.name} imported.`);
@@ -2677,14 +2937,16 @@ function savingThrows(character) {
   return abilities
     .map((ability, index) => {
       const proficient = character.saves.includes(index);
-      const bonus =
-        mod(character.abilities[index]) + (proficient ? prof(character) : 0);
+      const bonus = statValue(character, `save.${index}`);
       return /* HTML */ `<label class="save-row"
         ><input
           type="checkbox"
           data-save="${index}"
           ${proficient ? 'checked' : ''}
-        /><span>${ability}</span><strong>${sign(bonus)}</strong></label
+        /><span>${ability}</span
+        ><strong ${statHint(character, `save.${index}`)}
+          >${sign(bonus)}</strong
+        ></label
       >`;
     })
     .join('');
@@ -3140,7 +3402,7 @@ function levelUpReview(session) {
   const patch = levelUpPatch(session);
   const lines = [
     `Level: ${base.level} → ${patch.level}`,
-    `Proficiency: ${sign(prof(base))} → ${sign(prof(patch))}`,
+    `Proficiency: ${sign(statValue({ ...session.character, ...base }, 'proficiency'))} → ${sign(statValue({ ...session.character, ...patch }, 'proficiency'))}`,
     `Maximum HP: ${base.maxHp} → ${patch.maxHp}`,
     `Current HP: ${base.hp} → ${patch.hp}`,
     `Hit dice: ${base.hitDice} → ${patch.hitDice}`,
@@ -3183,7 +3445,7 @@ function renderLevelUpStep() {
   if (!session) return;
   const { draft, step } = session;
   $('#level-up-progress').textContent =
-    `Level ${session.base.level} → ${draft.level} · Proficiency ${sign(prof(session.base))} → ${sign(prof(draft))} · ${step + 1} of 4`;
+    `Level ${session.base.level} → ${draft.level} · Proficiency ${sign(statValue({ ...session.character, ...session.base }, 'proficiency'))} → ${sign(statValue({ ...session.character, ...draft }, 'proficiency'))} · ${step + 1} of 4`;
   $('#level-up-stage-title').textContent = levelUpSteps[step];
   $('#level-up-stage').innerHTML =
     step === 0
@@ -3396,18 +3658,25 @@ const views = {
         >${panel(
           'Reference Stats',
           /* HTML */ `<div class="glance"
-            ><div><span>Proficiency</span><strong>${sign(prof(c))}</strong></div
+            ><div
+              ><span>Proficiency</span
+              ><strong ${statHint(c, 'proficiency')}
+                >${sign(statValue(c, 'proficiency'))}</strong
+              ></div
             ><div
               ><span>Passive perception</span
-              ><strong
-                >${10 + mod(c.abilities[4]) + (c.skills.includes('Perception') ? prof(c) : 0) + (c.expertise.includes('Perception') ? prof(c) : 0)}</strong
+              ><strong ${statHint(c, 'passivePerception')}
+                >${statValue(c, 'passivePerception')}</strong
               ></div
             ><div
               ><span>Initiative</span
-              ><strong
-                >${sign(mod(c.abilities[1]) + c.initiativeBonus)}</strong
+              ><strong ${statHint(c, 'initiative')}
+                >${sign(statValue(c, 'initiative'))}</strong
               ></div
-            ><div><span>Armor Class</span><strong>${c.ac}</strong></div></div
+            ><div
+              ><span>Armor Class</span
+              ><strong ${statHint(c, 'ac')}>${statValue(c, 'ac')}</strong></div
+            ></div
           >`,
           /* HTML */ `<label class="check inspiration"
             ><input
@@ -3449,8 +3718,8 @@ const views = {
                   type="checkbox"
                   data-expertise="${s}"
                   ${c.expertise.includes(s) ? 'checked' : ''}
-                /><strong
-                  >${sign(mod(c.abilities[a]) + (c.skills.includes(s) ? prof(c) : 0) + (c.expertise.includes(s) ? prof(c) : 0))}</strong
+                /><strong ${statHint(c, `skill.${s}`)}
+                  >${sign(statValue(c, `skill.${s}`))}</strong
                 ></div
               >`,
           )
@@ -3460,7 +3729,7 @@ const views = {
     )}<div>${panel('Saving Throws', savingThrows(c))}${panel('Other Proficiencies & Languages', area('Languages, Tools, Armor & Weapons', 'proficiencies', 'Common, Elvish, thieves’ tools…'))}</div></div>`,
   combat: (c) =>
     /* HTML */ `<div class="combat-stats"
-        >${field('Armor Class', 'ac', 'number')}${field('Speed (ft)', 'speed', 'number')}${field('Initiative Adjustment', 'initiativeBonus', 'number')}${field('Hit Dice Remaining', 'hitDiceLeft', 'number')}${field('Hit Dice', 'hitDice')}</div
+        >${baseStatField(c, 'Armor Class', 'ac', 'ac')}${baseStatField(c, 'Speed (ft)', 'speed', 'speed')}${baseStatField(c, 'Initiative Adjustment', 'initiativeBonus', 'initiative')}${field('Hit Dice Remaining', 'hitDiceLeft', 'number')}${field('Hit Dice', 'hitDice')}</div
       ><div class="sheet-grid"
         ><div
           >${panel('Attacks & Actions', attackRecords(c), button('add-attack', '＋ Add attack', 'text-button'))}${combatSpells(c)}</div
@@ -3472,7 +3741,7 @@ const views = {
     /* HTML */ `<div class="spellcasting-layout"
         >${spellSlots(c)}${spellcastingSummary(c)}</div
       ><div class="spellbook-controls"
-        >${panel('Concentration', concentrationTracker(c, false))}${panel('Search & Filters', spellFilterControls(c))}</div
+        >${panel('Search & Filters', spellFilterControls(c))}</div
       >${panel(
         'Known Spells',
         `<div id="spell-results">${spellRecords(c)}</div>`,
@@ -3506,52 +3775,10 @@ const views = {
       >`,
     )}${panel(
       'Inventory',
-      `<input id="inventory-search" type="search" aria-label="Search items by name or notes" placeholder="Search items…" value="${esc(inventorySearch)}" />` +
+      `<div class="inventory-search-tools"><input id="inventory-search" type="search" aria-label="Search items by name or notes" placeholder="Search items…" value="${esc(inventorySearch)}" />${button('filter-item-modifiers', '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M2 4h3m4 0h5M2 12h7m4 0h1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /><circle cx="7" cy="4" r="2" stroke="currentColor" stroke-width="1.4" /><circle cx="11" cy="12" r="2" stroke="currentColor" stroke-width="1.4" /></svg>Modifiers Only', 'secondary inventory-modifier-filter', `aria-pressed="${inventoryModifiersOnly}" title="Show only items with stat bonuses"`)}</div>` +
         (c.equipment.length
           ? '<div class="inventory-list">' +
-            c.equipment
-              .map(
-                (e, i) =>
-                  /* HTML */ `<div
-                    class="inventory-row"
-                    data-inventory-index="${i}"
-                    ${inventoryMatches(e) ? '' : 'hidden'}
-                    ><div class="inventory-item-controls"
-                      ><button
-                        type="button"
-                        class="inventory-drag-handle icon-button"
-                        aria-label="Move ${esc(e.name || 'item')}"
-                        title="Drag to reorder; use Up or Down arrow keys when focused"
-                        ><svg
-                          width="18"
-                          height="18"
-                          viewBox="0 0 18 18"
-                          fill="none"
-                          aria-hidden="true"
-                        >
-                          <path
-                            d="M3 5h12M3 9h12M3 13h12"
-                            stroke="currentColor"
-                            stroke-width="1.5"
-                            stroke-linecap="round"
-                          /></svg></button
-                      ><label class="check"
-                        ><input
-                          aria-label="${esc(e.name || 'Item')} equipped"
-                          type="checkbox"
-                          data-field="equipment.${i}.equipped"
-                          ${e.equipped ? 'checked' : ''} /></label></div
-                    ><input
-                      class="inventory-item-name"
-                      type="text"
-                      data-field="equipment.${i}.name"
-                      value="${esc(e.name)}"
-                      aria-label="Item name"
-                      placeholder="Item name"
-                    />${field('Quantity', `equipment.${i}.quantity`, 'number')}${field('Weight (lb Each)', `equipment.${i}.weight`, 'number')}${itemNotes(e, i)}${button('remove', '×', 'icon-button', `data-list="equipment" data-index="${i}" aria-label="Remove item"`)}</div
-                  >`,
-              )
-              .join('') +
+            c.equipment.map(inventoryRecord).join('') +
             `</div><p class="help">Checkbox = equipped · Total carried weight: <strong>${c.equipment.reduce((n, e) => n + e.quantity * e.weight, 0).toFixed(1)} lb</strong> (all listed items; excludes coins)</p>`
           : empty(
               'Pack for the Journey',
@@ -3775,6 +4002,7 @@ async function exportCharacterPDF(button) {
       mod,
       prof,
       sign,
+      statValue,
     });
     const blob = new Blob([bytes], { type: 'application/pdf' });
     const url = URL.createObjectURL(blob);
@@ -3852,6 +4080,7 @@ function confirmEntryDeletion(character, list, index) {
       if (currentIndex === -1) return;
       if (list === 'attacks') editingAttack = null;
       if (list === 'spells') editingSpell = null;
+      if (list === 'equipment') editingItem = null;
       character[list].splice(currentIndex, 1);
       deletedEntries.push({ character, list, index: currentIndex, item });
       if (deletedEntries.length > 50) deletedEntries.shift();
@@ -4129,6 +4358,19 @@ function validateBackup(input) {
             throw Error(`Invalid ${key} entry.`);
           clean[k] = item[k];
         }
+        if (key === 'equipment' && item.bonuses !== undefined) {
+          if (!Array.isArray(item.bonuses))
+            throw Error('Invalid item bonuses.');
+          clean.bonuses = item.bonuses.map((bonus) => {
+            if (
+              !bonus ||
+              !bonusTargets.has(bonus.target) ||
+              !Number.isSafeInteger(bonus.amount)
+            )
+              throw Error('Invalid item bonus target or amount.');
+            return { target: bonus.target, amount: bonus.amount };
+          });
+        }
         if (key === 'resources' && item.recovery !== undefined) {
           if (!['manual', 'short', 'long'].includes(item.recovery))
             throw Error('Invalid resource recovery.');
@@ -4251,6 +4493,12 @@ function validateBackup(input) {
         note.links = note.links.filter((id) => validNoteIds.has(id));
     }
 
+    if (
+      [...bonusTargets.keys()].some(
+        (target) => !Number.isSafeInteger(statValue(c, target)),
+      )
+    )
+      throw Error('Item bonuses produce a value outside the supported range.');
     return c;
   });
 }
@@ -4665,6 +4913,7 @@ document.addEventListener('click', async (e) => {
 
     case 'add-item':
       inventorySearch = '';
+      inventoryModifiersOnly = false;
       c.equipment.push({
         name: '',
         quantity: 1,
@@ -4672,9 +4921,50 @@ document.addEventListener('click', async (e) => {
         notes: '',
         equipped: false,
       });
+      editingItem = c.equipment.at(-1);
+      changed();
+      renderCharacter();
+      $('[data-item-editor] .inventory-item-name')?.focus();
+      break;
+
+    case 'filter-item-modifiers':
+      inventoryModifiersOnly = !inventoryModifiersOnly;
+      btn.setAttribute('aria-pressed', String(inventoryModifiersOnly));
+      filterInventory(c);
+      break;
+
+    case 'edit-item':
+      editingItem = c.equipment[Number(btn.dataset.index)];
+      if (editingItem.bonuses?.length) expandedItemBonuses.add(editingItem);
+      renderCharacter();
+      $('[data-item-editor] .inventory-item-name')?.focus();
+      break;
+
+    case 'finish-item':
+      editingItem = null;
+      renderCharacter();
+      break;
+
+    case 'add-item-bonus': {
+      const item = c.equipment[Number(btn.dataset.index)];
+      item.bonuses ||= [];
+      item.bonuses.push({ target: 'ac', amount: 1 });
+      expandedItemBonuses.add(item);
+      changed();
+      renderCharacter();
+      $(
+        `[data-item-bonuses="${btn.dataset.index}"] .item-bonus-row:last-of-type input`,
+      )?.focus();
+      break;
+    }
+
+    case 'remove-item-bonus': {
+      const item = c.equipment[Number(btn.dataset.index)];
+      item.bonuses.splice(Number(btn.dataset.bonusIndex), 1);
       changed();
       renderCharacter();
       break;
+    }
 
     case 'remove':
       confirmEntryDeletion(c, btn.dataset.list, Number(btn.dataset.index));
@@ -4954,6 +5244,15 @@ document.addEventListener('click', (event) => {
     closeConditionsPicker();
   let refresh = false;
   if (
+    editingItem &&
+    !event.target.closest(
+      '[data-item-editor], [data-action="edit-item"], [data-action="add-item"], [data-action="add-item-bonus"], [data-action="remove-item-bonus"], [data-bonus-stat-option], .inventory-item-controls',
+    )
+  ) {
+    editingItem = null;
+    refresh = page === 'equipment';
+  }
+  if (
     editingAttack &&
     !event.target.closest(
       '[data-attack-editor], [data-action="edit-attack"], [data-action="add-attack"], [data-action="toggle-combat-favorite"]',
@@ -4997,14 +5296,24 @@ document.addEventListener(
   'toggle',
   (event) => {
     const details = event.target;
-    if (!details.matches?.('.inventory-notes') || !details.isConnected) return;
-    const item = current()?.equipment[Number(details.dataset.itemNotes)];
+    if (
+      !details.matches?.('.inventory-notes, .inventory-bonuses') ||
+      !details.isConnected
+    )
+      return;
+    const item =
+      current()?.equipment[
+        Number(details.dataset.itemNotes ?? details.dataset.itemBonuses)
+      ];
     if (!item) return;
+    const expanded = details.matches('.inventory-bonuses')
+      ? expandedItemBonuses
+      : expandedItemNotes;
     if (details.open) {
-      expandedItemNotes.add(item);
+      expanded.add(item);
       growTextAreas(details);
     } else {
-      expandedItemNotes.delete(item);
+      expanded.delete(item);
     }
   },
   true,
@@ -5024,6 +5333,49 @@ document.addEventListener('input', (e) => {
     return;
   }
   if (!c) return;
+  if (
+    el.dataset.itemBonusTarget !== undefined ||
+    el.dataset.itemBonusAmount !== undefined
+  ) {
+    const item =
+      c.equipment[
+        Number(el.dataset.itemBonusTarget ?? el.dataset.itemBonusAmount)
+      ];
+    const bonus = item.bonuses[Number(el.dataset.bonusIndex)];
+    const previous = { ...bonus };
+    if (el.dataset.itemBonusTarget !== undefined) {
+      openBonusStatPicker(el.closest('.bonus-stat-picker'), el.value);
+      const target = [...bonusTargets].find(
+        ([, label]) =>
+          label.toLocaleLowerCase() === el.value.trim().toLocaleLowerCase(),
+      )?.[0];
+      el.setCustomValidity(target ? '' : 'Choose a stat from the suggestions.');
+      if (!target) return;
+      bonus.target = target;
+    } else {
+      const amount = el.value === '' ? NaN : Number(el.value);
+      el.setCustomValidity(
+        Number.isSafeInteger(amount) ? '' : 'Enter a whole-number bonus.',
+      );
+      if (!Number.isSafeInteger(amount)) return;
+      bonus.amount = amount;
+    }
+    if (
+      [...bonusTargets.keys()].some(
+        (target) => !Number.isSafeInteger(statValue(c, target)),
+      )
+    ) {
+      Object.assign(bonus, previous);
+      el.setCustomValidity(
+        'This bonus produces a value outside the supported range.',
+      );
+      return;
+    }
+    pendingBackupEdits.add(el);
+    changed(false);
+    scheduleRefresh();
+    return;
+  }
   if (el.closest('.level-up-wizard')) {
     handleLevelUpInput(el);
     return;
@@ -5204,6 +5556,22 @@ document.addEventListener('change', (e) => {
     el.value = c.attacks[Number(el.dataset.attackUseLimit)].useLimit ?? '';
     el.setCustomValidity('');
     toast('Enter a positive whole number, or leave blank for unlimited.');
+  }
+  if (
+    (el.dataset.itemBonusTarget !== undefined ||
+      el.dataset.itemBonusAmount !== undefined) &&
+    !el.validity.valid
+  ) {
+    const bonus =
+      c.equipment[
+        Number(el.dataset.itemBonusTarget ?? el.dataset.itemBonusAmount)
+      ].bonuses[Number(el.dataset.bonusIndex)];
+    toast(el.validationMessage);
+    el.value =
+      el.dataset.itemBonusTarget !== undefined
+        ? bonusTargets.get(bonus.target)
+        : bonus.amount;
+    el.setCustomValidity('');
   }
 
   if (el.id === 'equipment-reference-category') {

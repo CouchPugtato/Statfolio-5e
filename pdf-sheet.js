@@ -308,7 +308,9 @@
   function fillStats(character, rules, writer) {
     const { text, check } = writer;
     const { abilities, mod, prof, sign, skills } = rules;
-    const proficiency = prof(character);
+    const value = (target, fallback) =>
+      rules.statValue ? rules.statValue(character, target) : fallback;
+    const proficiency = value('proficiency', prof(character));
     const identity = {
       CharacterName: character.name,
       'CharacterName 2': character.name,
@@ -321,9 +323,14 @@
       XP: character.xp,
       Inspiration: character.inspiration ? 'Yes' : '',
       ProfBonus: sign(proficiency),
-      AC: character.ac,
-      Initiative: sign(mod(character.abilities[1]) + character.initiativeBonus),
-      Speed: character.speed,
+      AC: value('ac', character.ac),
+      Initiative: sign(
+        value(
+          'initiative',
+          mod(character.abilities[1]) + character.initiativeBonus,
+        ),
+      ),
+      Speed: value('speed', character.speed),
       HPMax: character.maxHp,
       HPCurrent: character.hp,
       HPTemp: character.tempHp,
@@ -354,15 +361,22 @@
         size: 18,
         minSize: 12,
       });
-      text(modifierFields[index], sign(mod(character.abilities[index])), {
-        size: 10,
-        minSize: 7,
-      });
+      text(
+        modifierFields[index],
+        sign(value(`ability.${index}`, mod(character.abilities[index]))),
+        {
+          size: 10,
+          minSize: 7,
+        },
+      );
       text(
         `ST ${ability}`,
         sign(
-          mod(character.abilities[index]) +
-            (character.saves.includes(index) ? proficiency : 0),
+          value(
+            `save.${index}`,
+            mod(character.abilities[index]) +
+              (character.saves.includes(index) ? proficiency : 0),
+          ),
         ),
         { size: 7, minSize: 5.5 },
       );
@@ -395,9 +409,12 @@
       text(
         skillFields[index],
         sign(
-          mod(character.abilities[ability]) +
-            (proficient ? proficiency : 0) +
-            (expert ? proficiency : 0),
+          value(
+            `skill.${skill}`,
+            mod(character.abilities[ability]) +
+              (proficient ? proficiency : 0) +
+              (expert ? proficiency : 0),
+          ),
         ),
         { size: 7, minSize: 5.5 },
       );
@@ -406,10 +423,13 @@
 
     text(
       'Passive',
-      10 +
-        mod(character.abilities[4]) +
-        (character.skills.includes('Perception') ? proficiency : 0) +
-        (character.expertise.includes('Perception') ? proficiency : 0),
+      value(
+        'passivePerception',
+        10 +
+          mod(character.abilities[4]) +
+          (character.skills.includes('Perception') ? proficiency : 0) +
+          (character.expertise.includes('Perception') ? proficiency : 0),
+      ),
       { size: 11, minSize: 7 },
     );
     for (let index = 0; index < 3; index++) {
@@ -523,14 +543,28 @@
       size: 11,
       minSize: 8,
     });
-    text('SpellSaveDC  2', 8 + rules.prof(character) + bonus, {
-      size: 15,
-      minSize: 10,
-    });
-    text('SpellAtkBonus 2', rules.sign(rules.prof(character) + bonus), {
-      size: 15,
-      minSize: 10,
-    });
+    text(
+      'SpellSaveDC  2',
+      rules.statValue
+        ? rules.statValue(character, 'spellDC')
+        : 8 + rules.prof(character) + bonus,
+      {
+        size: 15,
+        minSize: 10,
+      },
+    );
+    text(
+      'SpellAtkBonus 2',
+      rules.sign(
+        rules.statValue
+          ? rules.statValue(character, 'spellAttack')
+          : rules.prof(character) + bonus,
+      ),
+      {
+        size: 15,
+        minSize: 10,
+      },
+    );
 
     for (const group of fieldMap.spellLevels) {
       const spells = character.spells.filter(
