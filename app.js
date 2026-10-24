@@ -222,18 +222,156 @@ let spellPopup = null;
 let spellPopupCard = null;
 let skillSearch = '';
 let inventorySearch = '';
+const expandedItemNotes = new WeakSet();
 let skillCharacterId = null;
+
+function itemNotes(item, index) {
+  const preview = item.notes.trim().replace(/\s+/g, ' ') || 'Add notes…';
+  return /* HTML */ `<details
+    class="inventory-notes"
+    data-item-notes="${index}"
+    ${expandedItemNotes.has(item) ? 'open' : ''}
+  >
+    <summary
+      ><span>Notes</span
+      ><span class="inventory-notes-preview">${esc(preview)}</span></summary
+    >
+    <textarea
+      rows="2"
+      data-field="equipment.${index}.notes"
+      aria-label="Notes for ${esc(item.name || 'item')}"
+      placeholder="Description, properties, or reminders…"
+    >
+${esc(item.notes)}</textarea>
+  </details>`;
+}
 
 function inventoryMatches(item) {
   const query = inventorySearch.trim().toLocaleLowerCase();
   return `${item.name} ${item.notes}`.toLocaleLowerCase().includes(query);
 }
 
+// Keep item objects intact so expanded notes and other item data follow the move.
+function moveInventoryItem(character, item, target, before) {
+  const from = character.equipment.indexOf(item);
+  const targetIndex = character.equipment.indexOf(target);
+  if (from < 0 || targetIndex < 0 || item === target) return;
+  let destination = targetIndex + (before ? 0 : 1);
+  if (from < destination) destination--;
+  if (from === destination) return;
+  character.equipment.splice(from, 1);
+  character.equipment.splice(destination, 0, item);
+  changed();
+  renderCharacter();
+  $(`[data-inventory-index="${destination}"] .inventory-drag-handle`)?.focus();
+}
+
+let inventoryDrag = null;
+
+function clearInventoryDrag() {
+  document
+    .querySelectorAll(
+      '.inventory-dragging, .inventory-drop-before, .inventory-drop-after',
+    )
+    .forEach((row) => {
+      row.classList.remove(
+        'inventory-dragging',
+        'inventory-drop-before',
+        'inventory-drop-after',
+      );
+    });
+  inventoryDrag = null;
+}
+
+document.addEventListener('pointerdown', (event) => {
+  const handle = event.target.closest('.inventory-drag-handle');
+  if (!handle || event.button !== 0) return;
+  const character = current();
+  const row = handle.closest('[data-inventory-index]');
+  inventoryDrag = {
+    character,
+    item: character.equipment[Number(row.dataset.inventoryIndex)],
+    row,
+    pointerId: event.pointerId,
+    x: event.clientX,
+    y: event.clientY,
+    moved: false,
+    target: null,
+  };
+  handle.setPointerCapture?.(event.pointerId);
+});
+
+document.addEventListener('pointermove', (event) => {
+  const drag = inventoryDrag;
+  if (!drag || event.pointerId !== drag.pointerId) return;
+  if (current() !== drag.character || page !== 'equipment') {
+    clearInventoryDrag();
+    return;
+  }
+  if (
+    !drag.moved &&
+    Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < 5
+  )
+    return;
+  drag.moved = true;
+  drag.row.classList.add('inventory-dragging');
+  document
+    .querySelectorAll('.inventory-drop-before, .inventory-drop-after')
+    .forEach((row) =>
+      row.classList.remove('inventory-drop-before', 'inventory-drop-after'),
+    );
+  const row = document
+    .elementFromPoint(event.clientX, event.clientY)
+    ?.closest('[data-inventory-index]');
+  drag.target = null;
+  if (!row || row.hidden || row === drag.row) return;
+  drag.target = drag.character.equipment[Number(row.dataset.inventoryIndex)];
+  const bounds = row.getBoundingClientRect();
+  drag.before = event.clientY < bounds.top + bounds.height / 2;
+  row.classList.add(
+    drag.before ? 'inventory-drop-before' : 'inventory-drop-after',
+  );
+});
+
+document.addEventListener('pointerup', (event) => {
+  const drag = inventoryDrag;
+  if (!drag || event.pointerId !== drag.pointerId) return;
+  clearInventoryDrag();
+  if (
+    drag.moved &&
+    drag.target &&
+    current() === drag.character &&
+    page === 'equipment'
+  )
+    moveInventoryItem(drag.character, drag.item, drag.target, drag.before);
+});
+
+document.addEventListener('pointercancel', clearInventoryDrag);
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && inventoryDrag) {
+    clearInventoryDrag();
+    return;
+  }
+  const handle = event.target.closest('.inventory-drag-handle');
+  if (!handle || !['ArrowUp', 'ArrowDown'].includes(event.key)) return;
+  event.preventDefault();
+  const character = current();
+  const item =
+    character.equipment[
+      Number(handle.closest('[data-inventory-index]').dataset.inventoryIndex)
+    ];
+  const visible = character.equipment.filter(inventoryMatches);
+  const before = event.key === 'ArrowUp';
+  const target = visible[visible.indexOf(item) + (before ? -1 : 1)];
+  if (target) moveInventoryItem(character, item, target, before);
+});
+
 function filterInventory(character) {
   for (const row of document.querySelectorAll('[data-inventory-index]')) {
     row.hidden = !inventoryMatches(
       character.equipment[Number(row.dataset.inventoryIndex)],
     );
+    if (!row.hidden) growTextAreas(row);
   }
   $('#inventory-search-empty').hidden =
     !character.equipment.length || character.equipment.some(inventoryMatches);
@@ -3228,13 +3366,39 @@ const views = {
                     class="inventory-row"
                     data-inventory-index="${i}"
                     ${inventoryMatches(e) ? '' : 'hidden'}
-                    ><label class="check"
-                      ><input
-                        aria-label="${esc(e.name || 'Item')} equipped"
-                        type="checkbox"
-                        data-field="equipment.${i}.equipped"
-                        ${e.equipped ? 'checked' : ''} /></label
-                    >${field('Item', `equipment.${i}.name`)}${field('Quantity', `equipment.${i}.quantity`, 'number')}${field('Weight (lb Each)', `equipment.${i}.weight`, 'number')}${field('Notes', `equipment.${i}.notes`)}${button('remove', '×', 'icon-button', `data-list="equipment" data-index="${i}" aria-label="Remove item"`)}</div
+                    ><div class="inventory-item-controls"
+                      ><button
+                        type="button"
+                        class="inventory-drag-handle icon-button"
+                        aria-label="Move ${esc(e.name || 'item')}"
+                        title="Drag to reorder; use Up or Down arrow keys when focused"
+                        ><svg
+                          width="18"
+                          height="18"
+                          viewBox="0 0 18 18"
+                          fill="none"
+                          aria-hidden="true"
+                        >
+                          <path
+                            d="M3 5h12M3 9h12M3 13h12"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                            stroke-linecap="round"
+                          /></svg></button
+                      ><label class="check"
+                        ><input
+                          aria-label="${esc(e.name || 'Item')} equipped"
+                          type="checkbox"
+                          data-field="equipment.${i}.equipped"
+                          ${e.equipped ? 'checked' : ''} /></label></div
+                    ><input
+                      class="inventory-item-name"
+                      type="text"
+                      data-field="equipment.${i}.name"
+                      value="${esc(e.name)}"
+                      aria-label="Item name"
+                      placeholder="Item name"
+                    />${field('Quantity', `equipment.${i}.quantity`, 'number')}${field('Weight (lb Each)', `equipment.${i}.weight`, 'number')}${itemNotes(e, i)}${button('remove', '×', 'icon-button', `data-list="equipment" data-index="${i}" aria-label="Remove item"`)}</div
                   >`,
               )
               .join('') +
@@ -4678,6 +4842,23 @@ function refreshesValues(path) {
   );
 }
 
+document.addEventListener(
+  'toggle',
+  (event) => {
+    const details = event.target;
+    if (!details.matches?.('.inventory-notes') || !details.isConnected) return;
+    const item = current()?.equipment[Number(details.dataset.itemNotes)];
+    if (!item) return;
+    if (details.open) {
+      expandedItemNotes.add(item);
+      growTextAreas(details);
+    } else {
+      expandedItemNotes.delete(item);
+    }
+  },
+  true,
+);
+
 document.addEventListener('input', (e) => {
   const el = e.target,
     c = current();
@@ -4800,6 +4981,12 @@ document.addEventListener('input', (e) => {
     }
     trackCombatFieldInput(c, el);
     set(c, el.dataset.field, value);
+    if (el.closest('.inventory-notes')) {
+      el
+        .closest('.inventory-notes')
+        .querySelector('.inventory-notes-preview').textContent =
+        String(value).trim().replace(/\s+/g, ' ') || 'Add notes…';
+    }
     const timingField = el.dataset.field.match(/^spells\.(\d+)\.time$/);
     if (timingField) {
       const spell = c.spells[Number(timingField[1])];

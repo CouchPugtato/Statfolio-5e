@@ -834,6 +834,142 @@ test('inventory search matches names and notes while preserving item indices, we
   }
 });
 
+test('item notes expand, retain their state during updates, and save multiline text safely', async () => {
+  const a = await app();
+  try {
+    const c = a.api.blank('Item Notes');
+    c.equipment.push({
+      name: 'Relic',
+      notes: 'Old description',
+      quantity: 1,
+      weight: 1,
+      equipped: false,
+    });
+    a.api.use(c);
+    a.api.setPage('equipment');
+    const details = a.$('.inventory-notes');
+    assert.equal(details.open, false);
+    assert.equal(a.$('[data-field="equipment.0.notes"]').tagName, 'TEXTAREA');
+    details.open = true;
+    await settle();
+    const notes =
+      'Ancient relic\n<script>not executable</script>\nFound in a crypt';
+    a.input('[data-field="equipment.0.notes"]', notes);
+    assert.equal(c.equipment[0].notes, notes);
+    assert.equal(
+      a.$('.inventory-notes-preview').textContent,
+      notes.replace(/\s+/g, ' '),
+    );
+    a.api.shell();
+    assert.equal(a.$('.inventory-notes').open, true);
+    assert.equal(a.$('[data-field="equipment.0.notes"]').value, notes);
+    assert.equal(a.$('.inventory-notes script'), null);
+    a.$('.inventory-notes').open = false;
+    await settle();
+    a.api.shell();
+    assert.equal(a.$('.inventory-notes').open, false);
+    await a.api.persist();
+    const b = await app(a.storage);
+    try {
+      assert.equal(b.api.current.equipment[0].notes, notes);
+    } finally {
+      b.close();
+    }
+  } finally {
+    a.close();
+  }
+});
+
+test('item handles reorder by pointer and keyboard, preserve filtered items, and save the order', async () => {
+  const a = await app();
+  try {
+    const c = a.api.blank('Ordered Gear');
+    c.equipment = ['Rope', 'Sword', 'Potion'].map((name) => ({
+      name,
+      notes: name === 'Rope' ? '' : 'Magic',
+      quantity: 1,
+      weight: 1,
+      equipped: false,
+    }));
+    a.api.use(c);
+    a.api.setPage('equipment');
+    assert.equal(
+      a.$('.inventory-item-name').getAttribute('aria-label'),
+      'Item name',
+    );
+    assert.equal(a.$('.inventory-item-name').closest('label'), null);
+    const pointer = (target, type, x, y) => {
+      const event = new a.w.MouseEvent(type, {
+        bubbles: true,
+        button: 0,
+        clientX: x,
+        clientY: y,
+      });
+      Object.defineProperty(event, 'pointerId', { value: 1 });
+      target.dispatchEvent(event);
+    };
+    const handle = a.$('[data-inventory-index="2"] .inventory-drag-handle');
+    const target = a.$('[data-inventory-index="0"]');
+    target.getBoundingClientRect = () => ({ top: 0, height: 100 });
+    a.w.document.elementFromPoint = () => target;
+    const revision = a.api.revision;
+    pointer(handle, 'pointerdown', 0, 200);
+    pointer(a.w.document, 'pointermove', 0, 10);
+    assert.equal(target.classList.contains('inventory-drop-before'), true);
+    pointer(a.w.document, 'pointerup', 0, 10);
+    assert.deepEqual(
+      Array.from(c.equipment, (item) => item.name),
+      ['Potion', 'Rope', 'Sword'],
+    );
+    assert.equal(a.api.revision, revision + 1);
+    assert.equal(a.$('.inventory-drop-before'), null);
+    a.input('#inventory-search', 'magic');
+    const first = a.$('[data-inventory-index="0"] .inventory-drag-handle');
+    first.dispatchEvent(
+      new a.w.KeyboardEvent('keydown', {
+        key: 'ArrowDown',
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    assert.deepEqual(
+      Array.from(c.equipment, (item) => item.name),
+      ['Rope', 'Sword', 'Potion'],
+    );
+    assert.equal(a.$('[data-inventory-index="0"]').hidden, true);
+    assert.equal(a.$('#inventory-search').value, 'magic');
+    assert.equal(
+      a.w.document.activeElement,
+      a.$('[data-inventory-index="2"] .inventory-drag-handle'),
+    );
+    const beforeCancel = JSON.stringify(c.equipment);
+    pointer(
+      a.$('[data-inventory-index="2"] .inventory-drag-handle'),
+      'pointerdown',
+      0,
+      200,
+    );
+    pointer(a.w.document, 'pointermove', 0, 10);
+    pointer(a.w.document, 'pointercancel', 0, 10);
+    pointer(a.w.document, 'pointerup', 0, 10);
+    assert.equal(JSON.stringify(c.equipment), beforeCancel);
+    a.input('[data-field="equipment.2.name"]', 'Healing Potion');
+    assert.equal(c.equipment[2].name, 'Healing Potion');
+    await a.api.persist();
+    const b = await app(a.storage);
+    try {
+      assert.deepEqual(
+        Array.from(b.api.current.equipment, (item) => item.name),
+        ['Rope', 'Sword', 'Healing Potion'],
+      );
+    } finally {
+      b.close();
+    }
+  } finally {
+    a.close();
+  }
+});
+
 test('currency spending breaks larger coins, combines smaller coins, and saves gains', async () => {
   const a = await app();
   try {
