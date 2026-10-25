@@ -25,10 +25,7 @@ jobs:
       - run: npm ci
       - run: npm test
       - name: Prepare static files
-        run: |
-          mkdir _site
-          cp index.html app.js style.css icon.svg .nojekyll _site/
-          cp -R assets _site/
+        run: node scripts/build-site.cjs
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

@@ -338,8 +338,10 @@ test('level-up rejects invalid input and stale reviews, caps at level 20, and ca
   }
 });
 
-async function app(storage = new IDBFactory()) {
-  const dom = new JSDOM(html, {
+async function app(storage = new IDBFactory(), assetRoot = '.') {
+  const readAsset = (file) =>
+    fs.readFileSync(require('node:path').join(assetRoot, file), 'utf8');
+  const dom = new JSDOM(readAsset('index.html'), {
     url: 'https://example.test/Statfolio-5e/',
     runScripts: 'outside-only',
   });
@@ -361,10 +363,10 @@ async function app(storage = new IDBFactory()) {
     return 'blob:test';
   };
   w.URL.revokeObjectURL = () => {};
-  w.eval(fs.readFileSync('text-format.js', 'utf8'));
-  w.eval(pdfSource);
+  w.eval(readAsset('text-format.js'));
+  w.eval(readAsset('pdf-sheet.js'));
   w.eval(
-    source.replace(/init\(\);\s*$/, '') +
+    readAsset('app.js').replace(/init\(\);\s*$/, '') +
       `
     globalThis.api = { blank, prof, mod, statValue, bonusTargets, views, validateBackup, persist, shell, renderCharacter, changed, exportBackup, backupRecommended, renderBackupStatus,
       get state(){return state;},get revision(){return revision;},get savedRevision(){return savedRevision;},
@@ -2783,6 +2785,30 @@ test('all sheet pages render and inventory preserves fractional weights and nega
     assert.equal(c.spells[0].name, 'A custom spell');
   } finally {
     a.close();
+  }
+});
+
+test('all tabs work using only the files packaged for GitHub Pages', async () => {
+  const path = require('node:path');
+  const destination = fs.mkdtempSync(
+    path.join(require('node:os').tmpdir(), 'statfolio-pages-'),
+  );
+  let a;
+  try {
+    require('../scripts/build-site.cjs').buildSite(destination);
+    a = await app(new IDBFactory(), destination);
+    a.api.use(a.api.blank('Published Character'));
+    for (const page of [
+      'abilities', 'combat', 'spells', 'equipment', 'background', 'notes', 'overview',
+    ]) {
+      a.click(`[data-page="${page}"]`);
+      assert.equal(a.$('.section-tabs .selected').dataset.page, page);
+      assert.ok(a.$('#page-content').textContent.length > 20);
+      assert.doesNotMatch(a.$('#toast').textContent, /could not be opened/);
+    }
+  } finally {
+    a?.close();
+    fs.rmSync(destination, { recursive: true, force: true });
   }
 });
 
