@@ -3847,6 +3847,25 @@ function journalTags(character) {
   );
 }
 
+function noteTagOptions(character, value) {
+  const comma = value.lastIndexOf(',');
+  const query = value.slice(comma + 1).trim().toLocaleLowerCase();
+  const selected = new Set(
+    value.split(',').map((tag) => tag.trim().toLocaleLowerCase()),
+  );
+  const prefix = comma < 0 ? '' : `${value.slice(0, comma + 1)} `;
+  return journalTags(character)
+    .filter((tag) => {
+      const normalized = tag.toLocaleLowerCase();
+      return !selected.has(normalized) && normalized.includes(query);
+    })
+    .map(
+      (tag) =>
+        `<option value="${esc(prefix + tag)}" label="${esc(tag)}"></option>`,
+    )
+    .join('');
+}
+
 function remapNoteIds(character) {
   const ids = new Map(character.notes.map((note) => [note.id, uid()]));
 
@@ -4004,8 +4023,12 @@ function journalView(c) {
                 ><span>Tags</span
                 ><input
                   data-note="tags"
+                  list="note-tag-suggestions"
+                  autocomplete="off"
                   value="${esc((n.tags || []).join(', '))}"
-                  placeholder="Separate tags with commas" /></label
+                  placeholder="Separate tags with commas" /><datalist
+                  id="note-tag-suggestions"
+                  >${noteTagOptions(c, (n.tags || []).join(', '))}</datalist></label
               ><label class="field"
                 ><span>Notes</span
                 ><textarea
@@ -5558,6 +5581,8 @@ document.addEventListener('input', (e) => {
     if (refreshesValues(el.dataset.field)) scheduleRefresh();
   }
   if (el.dataset.note) {
+    if (el.dataset.note === 'tags')
+      $('#note-tag-suggestions').innerHTML = noteTagOptions(c, el.value);
     const n = c.notes.find((n) => n.id === noteId);
     n[el.dataset.note] =
       el.dataset.note === 'tags'

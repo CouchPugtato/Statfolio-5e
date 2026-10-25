@@ -2355,6 +2355,49 @@ test('notes stay with their character, escape markup, and export all images', as
   }
 });
 
+test('note tag autocomplete reuses character tags after commas without replacing existing tags', async () => {
+  const a = await app();
+  try {
+    const character = a.api.blank('Tag suggestions');
+    const note = (tags) => ({
+      id: randomUUID(), title: 'Note', body: '', tag: 'General', tags,
+      images: [], updated: new Date().toISOString(),
+    });
+    character.notes = [note([]), note(['Quest', 'NPC', 'Quest', '<Clue>'])];
+    a.api.use(character);
+    a.api.setPage('notes');
+    const suggestions = () => [...a.w.document.querySelectorAll('#note-tag-suggestions option')];
+    assert.equal(a.$('[data-note="tags"]').getAttribute('list'), 'note-tag-suggestions');
+    assert.deepEqual(suggestions().map((option) => option.value), ['<Clue>', 'NPC', 'Quest']);
+    a.input('[data-note="tags"]', 'qu', false);
+    assert.deepEqual(suggestions().map((option) => option.value), ['Quest']);
+    a.input('[data-note="tags"]', 'NPC, qU', false);
+    assert.deepEqual(suggestions().map((option) => option.value), ['NPC, Quest']);
+    // Native datalist selection emits input/change with the option's value.
+    a.input('[data-note="tags"]', suggestions()[0].value);
+    await settle();
+    assert.deepEqual(Array.from(character.notes[0].tags), ['NPC', 'Quest']);
+    a.input('[data-note="tags"]', 'NPC, Quest, ', false);
+    assert.deepEqual(suggestions().map((option) => option.value), ['NPC, Quest, <Clue>']);
+    assert.equal(a.$('#note-tag-suggestions Clue'), null);
+    a.input('[data-note="tags"]', 'NPC, Quest, New custom tag');
+    await a.api.persist();
+    const b = await app(a.storage);
+    try {
+      assert.deepEqual(Array.from(b.api.current.notes[0].tags), ['NPC', 'Quest', 'New custom tag']);
+      b.api.setPage('notes');
+      b.click(`[data-action="select-note"][data-id="${character.notes[1].id}"]`);
+      b.input('[data-note="tags"]', 'NPC, new', false);
+      assert.equal(b.$('#note-tag-suggestions option').value, 'NPC, New custom tag');
+    } finally { b.close(); }
+    const other = a.api.blank('Separate character');
+    other.notes = [note([])];
+    a.api.use(other);
+    a.api.setPage('notes');
+    assert.equal(suggestions().length, 0);
+  } finally { a.close(); }
+});
+
 test('journal pins, custom tags, and related links work together and save independently', async () => {
   const a = await app();
 
