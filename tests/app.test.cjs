@@ -2806,6 +2806,76 @@ test('sheet tabs render their page when changed through the navigation controls'
   }
 });
 
+test('tab clicks do not clone the library, preserve pending autosave, and recover after a render failure', async () => {
+  const a = await app();
+  try {
+    a.api.use(a.api.blank('Navigation'));
+    await a.api.persist();
+    let clones = 0;
+    a.w.structuredClone = (value) => { clones++; return structuredClone(value); };
+    a.input('[data-field="name"]', 'Saved after switching');
+    for (const page of ['abilities', 'combat', 'spells', 'equipment', 'background', 'notes', 'overview'])
+      a.click(`[data-page="${page}"]`);
+    assert.equal(clones, 0, 'navigation must not synchronously clone the library');
+    await new Promise(resolve => setTimeout(resolve, 350));
+    assert.equal(a.api.savedRevision, a.api.revision);
+    assert.equal(clones, 1, 'the existing debounced save should still run');
+    const view = a.api.views.combat;
+    a.api.views.combat = () => { throw Error('Render failure'); };
+    a.w.console.error = () => {};
+    const content = a.$('#page-content').innerHTML;
+    a.click('[data-page="combat"]');
+    assert.equal(a.$('.section-tabs .selected').dataset.page, 'overview');
+    assert.equal(a.$('#page-content').innerHTML, content);
+    assert.match(a.$('#toast').textContent, /could not be opened/);
+    a.api.views.combat = view;
+    a.click('[data-page="combat"]');
+    assert.ok(a.$('.combat-stats'));
+    const b = await app(a.storage);
+    try { assert.equal(b.api.current.name, 'Saved after switching'); }
+    finally { b.close(); }
+  } finally { a.close(); }
+});
+
+test('legacy version 1 JSON imports, renders every tab, edits new fields, and reloads without losing old data', async () => {
+  const legacy = JSON.parse(fs.readFileSync('tests/fixtures/legacy-v1.json', 'utf8'));
+  const a = await app();
+  try {
+    await a.restore(legacy.characters);
+    const c = a.api.state.characters[0];
+    a.click(`[data-action="open"][data-id="${c.id}"]`);
+    assert.equal(c.exhaustionLevel, 0);
+    assert.equal(c.combatLog.length, 0);
+    assert.equal(c.activeConditions.length, 0);
+    assert.equal(c.spells[0].concentration, true);
+    assert.equal(c.notes[0].images.length, 0);
+    for (const page of ['abilities', 'combat', 'spells', 'equipment', 'background', 'notes', 'overview']) {
+      a.click(`[data-page="${page}"]`);
+      assert.equal(a.$('.section-tabs .selected').dataset.page, page);
+      assert.ok(a.$('#page-content').textContent.length > 20);
+    }
+    a.click('[data-page="equipment"]');
+    a.click('[data-action="edit-item"]');
+    a.click('[data-action="add-item-bonus"]');
+    a.input('[data-item-bonus-amount]', 2);
+    await a.api.persist();
+    const b = await app(a.storage);
+    try {
+      const saved = b.api.current;
+      assert.equal(saved.conditions, legacy.characters[0].conditions);
+      assert.equal(saved.notes[0].body, 'Old journal text');
+      assert.equal(saved.equipment[0].bonuses[0].amount, 2);
+      assert.equal(saved.resources[0].remaining, 1);
+      for (const page of ['abilities', 'combat', 'spells', 'equipment', 'background', 'notes']) {
+        b.click(`[data-page="${page}"]`);
+        assert.equal(b.$('.section-tabs .selected').dataset.page, page);
+      }
+      const roundTrip = b.api.validateBackup(JSON.parse(JSON.stringify({format:'statfolio',version:1,characters:[saved]})));
+      assert.equal(roundTrip[0].notes[0].body, saved.notes[0].body);
+    } finally { b.close(); }
+  } finally { a.close(); }
+});
+
 test('storage failure keeps in-memory data exportable and reports the save problem', async () => {
   const a = await app();
   try {

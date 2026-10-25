@@ -1037,22 +1037,32 @@ function renderCharacter() {
   growTextAreas($('#main'));
 }
 
-function renderPage() {
+function renderPage(nextPage) {
   const c = current();
   const content = $('#page-content');
-  if (!c || !content || !Object.hasOwn(views, page)) return;
+  if (!c || !content || !Object.hasOwn(views, nextPage)) return;
 
   // Build the next view before changing the live DOM. A page-specific render
   // should never tear down the workspace or leave an empty shell behind.
-  const html = views[page](c);
+  const template = document.createElement('template');
+  const previousPage = page;
+  try {
+    page = nextPage;
+    template.innerHTML = views[nextPage](c);
+    prepareTextEditors(template.content);
+  } finally {
+    page = previousPage;
+  }
   hideSpellPopup();
+  page = nextPage;
   for (const tab of document.querySelectorAll('.section-tabs [data-page]'))
     tab.classList.toggle('selected', tab.dataset.page === page);
-  content.innerHTML = html;
+  content.replaceChildren(template.content);
   growTextAreas(content);
 }
 
 function growTextArea(el) {
+  if (el.hidden) return;
   el.style.height = 'auto';
   const style = getComputedStyle(el);
   const borders =
@@ -1063,7 +1073,24 @@ function growTextArea(el) {
 
 function growTextAreas(root = document) {
   prepareTextEditors(root);
-  root.querySelectorAll('textarea').forEach(growTextArea);
+  // Batch writes and reads so each field doesn't force a fresh page layout.
+  const fields = [...root.querySelectorAll('textarea')].filter(
+    (el) => !el.hidden,
+  );
+  fields.forEach((el) => {
+    el.style.height = 'auto';
+  });
+  const heights = fields.map((el) => {
+    const style = getComputedStyle(el);
+    return Math.ceil(
+      el.scrollHeight +
+        (parseFloat(style.borderTopWidth) || 0) +
+        (parseFloat(style.borderBottomWidth) || 0),
+    );
+  });
+  fields.forEach((el, index) => {
+    el.style.height = `${heights[index]}px`;
+  });
 }
 
 // Unfocused fields show formatted text; focusing reveals the Markdown source.
@@ -4582,11 +4609,22 @@ document.addEventListener('click', async (e) => {
   const nav = e.target.closest('[data-page]');
   if (nav) {
     e.preventDefault();
-    page = nav.dataset.page;
+    if (!Object.hasOwn(views, nav.dataset.page) || nav.dataset.page === page)
+      return;
     clearTimeout(refreshTimer);
-    clearTimeout(saveTimer);
-    renderPage();
-    persist().catch(() => {});
+    try {
+      renderPage(nav.dataset.page);
+      editingAttack = null;
+      editingSpell = null;
+      editingItem = null;
+    } catch (error) {
+      console.error(error);
+      toast(
+        'This page could not be opened. Your current page and character are still available.',
+      );
+    }
+    // Edits already schedule autosave. Navigation changes no saved data, and
+    // cloning a library with portraits/attachments on every click blocks input.
     return;
   }
   const btn = e.target.closest('[data-action]');
