@@ -1037,6 +1037,21 @@ function renderCharacter() {
   growTextAreas($('#main'));
 }
 
+function renderPage() {
+  const c = current();
+  const content = $('#page-content');
+  if (!c || !content || !Object.hasOwn(views, page)) return;
+
+  // Build the next view before changing the live DOM. A page-specific render
+  // should never tear down the workspace or leave an empty shell behind.
+  const html = views[page](c);
+  hideSpellPopup();
+  for (const tab of document.querySelectorAll('.section-tabs [data-page]'))
+    tab.classList.toggle('selected', tab.dataset.page === page);
+  content.innerHTML = html;
+  growTextAreas(content);
+}
+
 function growTextArea(el) {
   el.style.height = 'auto';
   const style = getComputedStyle(el);
@@ -4566,10 +4581,12 @@ $('#restore-file').onchange = async (e) => {
 document.addEventListener('click', async (e) => {
   const nav = e.target.closest('[data-page]');
   if (nav) {
+    e.preventDefault();
     page = nav.dataset.page;
+    clearTimeout(refreshTimer);
     clearTimeout(saveTimer);
+    renderPage();
     persist().catch(() => {});
-    shell();
     return;
   }
   const btn = e.target.closest('[data-action]');

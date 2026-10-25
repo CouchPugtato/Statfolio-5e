@@ -2786,6 +2786,26 @@ test('all sheet pages render and inventory preserves fractional weights and nega
   }
 });
 
+test('sheet tabs render their page when changed through the navigation controls', async () => {
+  const a = await app();
+  try {
+    a.api.use(a.api.blank('Tab Navigation'));
+    const workspace = a.$('.workspace');
+    for (const [page, heading] of [
+      ['abilities', 'Skills'],
+      ['combat', 'Attacks & Actions'],
+      ['overview', 'Character Details'],
+    ]) {
+      a.click(`[data-page="${page}"]`);
+      assert.equal(a.$('.workspace'), workspace);
+      assert.equal(a.$('.section-tabs .selected').dataset.page, page);
+      assert.match(a.$('#page-content').textContent, new RegExp(heading));
+    }
+  } finally {
+    a.close();
+  }
+});
+
 test('storage failure keeps in-memory data exportable and reports the save problem', async () => {
   const a = await app();
   try {
