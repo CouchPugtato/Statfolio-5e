@@ -992,6 +992,9 @@ function renderLibrary() {
 function renderCharacter() {
   hideSpellPopup();
   const c = current();
+  const tagSuggestionsOpen =
+    document.activeElement?.matches('[data-note="tags"]') &&
+    $('#note-tag-suggestions')?.hidden === false;
   if (skillCharacterId !== c.id) {
     skillCharacterId = c.id;
     skillSearch = '';
@@ -1035,6 +1038,7 @@ function renderCharacter() {
     ><div id="page-content">${views[page](c)}</div>`;
   patchContent($('#main'), html);
   growTextAreas($('#main'));
+  if (tagSuggestionsOpen) openNoteTagSuggestions($('[data-note="tags"]'));
 }
 
 function renderPage(nextPage) {
@@ -3860,11 +3864,101 @@ function noteTagOptions(character, value) {
       return !selected.has(normalized) && normalized.includes(query);
     })
     .map(
-      (tag) =>
-        `<option value="${esc(prefix + tag)}" label="${esc(tag)}"></option>`,
+      (tag, index) =>
+        `<button type="button" role="option" tabindex="-1" id="note-tag-option-${index}" data-note-tag-value="${esc(prefix + tag)}" aria-selected="false"><span class="note-tag-mark" aria-hidden="true">#</span><span>${esc(tag)}</span></button>`,
     )
     .join('');
 }
+
+function closeNoteTagSuggestions() {
+  const input = $('[data-note="tags"]');
+  const list = $('#note-tag-suggestions');
+  if (list) list.hidden = true;
+  if (input) {
+    input.setAttribute('aria-expanded', 'false');
+    input.removeAttribute('aria-activedescendant');
+  }
+}
+
+function openNoteTagSuggestions(input) {
+  const list = $('#note-tag-suggestions');
+  if (!list || !current()) return;
+  list.innerHTML = noteTagOptions(current(), input.value);
+  list.hidden = !list.children.length;
+  input.setAttribute('aria-expanded', String(!list.hidden));
+  input.removeAttribute('aria-activedescendant');
+}
+
+function chooseNoteTag(option) {
+  const input = $('[data-note="tags"]');
+  input.value = option.dataset.noteTagValue;
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+  input.focus({ preventScroll: true });
+  closeNoteTagSuggestions();
+}
+
+document.addEventListener('pointerdown', (event) => {
+  // Keep the input focused until the option's click has been handled.
+  if (event.target.closest('[data-note-tag-value]')) event.preventDefault();
+});
+
+document.addEventListener('focusin', (event) => {
+  if (event.target.matches('[data-note="tags"]'))
+    openNoteTagSuggestions(event.target);
+});
+
+document.addEventListener('focusout', (event) => {
+  if (event.target.matches('[data-note="tags"]')) closeNoteTagSuggestions();
+});
+
+document.addEventListener('click', (event) => {
+  const option = event.target.closest('[data-note-tag-value]');
+  if (option) {
+    event.preventDefault();
+    chooseNoteTag(option);
+  } else if (event.target.matches('[data-note="tags"]')) {
+    openNoteTagSuggestions(event.target);
+  } else {
+    closeNoteTagSuggestions();
+  }
+});
+
+document.addEventListener('keydown', (event) => {
+  const input = event.target;
+  if (!input.matches('[data-note="tags"]')) return;
+  const list = $('#note-tag-suggestions');
+  if (event.key === 'Escape' || event.key === 'Tab') {
+    if (event.key === 'Escape' && !list.hidden) event.preventDefault();
+    closeNoteTagSuggestions();
+    return;
+  }
+  if (!['ArrowDown', 'ArrowUp', 'Enter'].includes(event.key)) return;
+  if (event.key === 'Enter' && list.hidden) return;
+  if (list.hidden) openNoteTagSuggestions(input);
+  const options = [...list.querySelectorAll('[role="option"]')];
+  if (!options.length) return;
+  event.preventDefault();
+  const active = options.findIndex(
+    (option) => option.id === input.getAttribute('aria-activedescendant'),
+  );
+  if (event.key === 'Enter') {
+    chooseNoteTag(options[Math.max(0, active)]);
+    return;
+  }
+  const next =
+    active < 0
+      ? event.key === 'ArrowDown'
+        ? 0
+        : options.length - 1
+      : (active + (event.key === 'ArrowDown' ? 1 : -1) + options.length) %
+        options.length;
+  options.forEach((option, index) =>
+    option.setAttribute('aria-selected', String(index === next)),
+  );
+  input.setAttribute('aria-activedescendant', options[next].id);
+  options[next].scrollIntoView?.({ block: 'nearest' });
+});
 
 function remapNoteIds(character) {
   const ids = new Map(character.notes.map((note) => [note.id, uid()]));
@@ -4019,16 +4113,23 @@ function journalView(c) {
                 ><select data-note="tag"
                   >${noteCategories.map((t) => /* HTML */ `<option ${n.tag === t ? 'selected' : ''}>${t}</option>`).join('')}</select
                 ></label
-              ><label class="field"
+              ><label class="field note-tag-field"
                 ><span>Tags</span
                 ><input
                   data-note="tags"
-                  list="note-tag-suggestions"
+                  role="combobox"
+                  aria-autocomplete="list"
+                  aria-expanded="false"
+                  aria-controls="note-tag-suggestions"
                   autocomplete="off"
                   value="${esc((n.tags || []).join(', '))}"
-                  placeholder="Separate tags with commas" /><datalist
+                  placeholder="Separate tags with commas" /><div
+                  class="note-tag-options"
                   id="note-tag-suggestions"
-                  >${noteTagOptions(c, (n.tags || []).join(', '))}</datalist></label
+                  role="listbox"
+                  aria-label="Existing tags"
+                  hidden
+                  >${noteTagOptions(c, (n.tags || []).join(', '))}</div></label
               ><label class="field"
                 ><span>Notes</span
                 ><textarea
@@ -5582,7 +5683,7 @@ document.addEventListener('input', (e) => {
   }
   if (el.dataset.note) {
     if (el.dataset.note === 'tags')
-      $('#note-tag-suggestions').innerHTML = noteTagOptions(c, el.value);
+      openNoteTagSuggestions(el);
     const n = c.notes.find((n) => n.id === noteId);
     n[el.dataset.note] =
       el.dataset.note === 'tags'

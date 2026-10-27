@@ -4007,7 +4007,8 @@ dialog:has(.cast-popup) button[type='submit']:disabled {
   color: var(--accent);
 }
 
-.bonus-stat-options {
+.bonus-stat-options,
+.note-tag-options {
   position: absolute;
   top: calc(100% + 4px);
   left: 0;
@@ -4023,11 +4024,13 @@ dialog:has(.cast-popup) button[type='submit']:disabled {
   padding: 4px;
 }
 
-.bonus-stat-options::-webkit-scrollbar {
+.bonus-stat-options::-webkit-scrollbar,
+.note-tag-options::-webkit-scrollbar {
   display: none;
 }
 
-.bonus-stat-options > button {
+.bonus-stat-options > button,
+.note-tag-options > button {
   display: block;
   width: 100%;
   padding: 8px;
@@ -4040,7 +4043,9 @@ dialog:has(.cast-popup) button[type='submit']:disabled {
 }
 
 .bonus-stat-options > button:hover,
-.bonus-stat-options > button[aria-selected='true'] {
+.bonus-stat-options > button[aria-selected='true'],
+.note-tag-options > button:hover,
+.note-tag-options > button[aria-selected='true'] {
   background: var(--accent-light);
   color: var(--accent);
 }
@@ -4049,6 +4054,39 @@ dialog:has(.cast-popup) button[type='submit']:disabled {
   display: block;
   padding: 8px;
   font-size: 13px;
+}
+
+.note-tag-field {
+  position: relative;
+}
+
+.note-tag-options {
+  left: calc(5rem + 10px);
+}
+
+.note-tag-options[hidden] {
+  display: none;
+}
+
+.note-tag-options > button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  overflow-wrap: anywhere;
+}
+
+.note-tag-mark {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--accent-light);
+  color: var(--accent);
+  font-size: 12px;
 }
 .item-bonus-row input[type='number'] {
   text-align: center;
